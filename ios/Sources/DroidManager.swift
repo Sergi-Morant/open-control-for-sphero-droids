@@ -63,7 +63,7 @@ extension DroidManager: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ c: CBCentralManager) {
         switch c.state {
         case .poweredOn: bluetoothText = "Bluetooth listo"
-        case .unauthorized: bluetoothText = "Permiso de Bluetooth denegado (Ajustes › R2 Control)"
+        case .unauthorized: bluetoothText = "Permiso de Bluetooth denegado (Ajustes › Sphero droids open control)"
         case .poweredOff: bluetoothText = "Bluetooth apagado"
         default: bluetoothText = "Bluetooth no disponible"
         }

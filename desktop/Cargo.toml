@@ -2,11 +2,12 @@
 name = "r2control"
 version = "0.1.0"
 edition = "2024"
+description = "Control no oficial de los droides Sphero desde macOS, Linux y Windows"
+license = "MIT"
 
 [dependencies]
 anyhow = "1.0.104"
 btleplug = "0.13.5"
-directories = "6.0.0"
 eframe = "0.37.0"
 egui = "0.37.0"
 fastrand = "2.5.0"

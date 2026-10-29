@@ -1,4 +1,4 @@
-# Protocolo Bluetooth LE de los droides Sphero Star Wars
+# Protocolo Bluetooth LE de los droides Sphero
 
 Documentación obtenida analizando la app oficial *Star Wars Droids* (APK 1.7.2.4) para poder hablar con los droides desde otra plataforma.
 Cada dato lleva una etiqueta de fiabilidad:
@@ -132,6 +132,8 @@ IDs tomados de las clases `Sphero.Commands.*` del SDK en C# (`Assembly-CSharp-fi
 Lista completa en [`tools/sdk_commands.txt`](../tools/sdk_commands.txt) (formato `Comando did cid`, en decimal).
 
 > **Aviso:** la tabla de símbolos nativa (`tools/ids.txt`) a veces difiere del SDK en C# (por ejemplo, *EnableIdleAnimations* es `0x2C` en el SDK y `0x0A` en `libCore.so`). Esta app usa los valores del SDK en C#, que son los que envía la app.
+
+> Las tablas de `tools/` omiten a propósito los comandos de modo de fábrica, almacenamiento y actualización de firmware (bootloader, reflash): no se usan y un uso incorrecto puede dejar el droide inservible.
 
 | Función | Destino | did | cid | Payload |
 |---|---|---|---|---|

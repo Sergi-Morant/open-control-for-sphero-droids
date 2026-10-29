@@ -1,15 +1,15 @@
-# R2 Control — control no oficial de los droides Sphero Star Wars
+# Sphero droids open control
 
-Apps para controlar los droides **R2-D2, R2-Q5, BB-9E y BB-8** de Sphero por Bluetooth LE:
+Apps de código abierto para controlar por Bluetooth LE los droides **R2-D2, R2-Q5, BB-9E y BB-8** de Sphero:
 
 - **iPhone** (`ios/`): SwiftUI + CoreBluetooth.
 - **Ordenador** (`desktop/`): Rust, para **macOS, Linux y Windows**.
 
 Nació porque la app oficial *Star Wars Droids* solo se encuentra para Android y quería controlar mi R2-D2 desde iOS.
 
-> **Proyecto no oficial.** No está afiliado, respaldado ni patrocinado por Sphero, Disney ni Lucasfilm.
-> *Sphero*, *R2-D2*, *BB-8*, *BB-9E*, *R2-Q5* y *Star Wars* son marcas de sus respectivos propietarios.
-> No se incluye código, audio, firmware ni recursos de la app original: solo una reimplementación del protocolo Bluetooth LE.
+> **Proyecto no oficial e independiente.** No está afiliado, respaldado ni patrocinado por Sphero, Disney ni Lucasfilm.
+> *Sphero*, *R2-D2*, *BB-8*, *BB-9E*, *R2-Q5* y *Star Wars* son marcas de sus respectivos propietarios y se citan solo para indicar con qué droides es compatible.
+> No se incluye código, audio, firmware ni recursos de la app original: solo una reimplementación propia del protocolo Bluetooth LE.
 
 ## Estado
 
@@ -110,13 +110,13 @@ Es una reimplementación del protocolo, no un port. Se analizó el APK de la app
 
 Para regenerar los datos necesitas tu propio APK (no se distribuye aquí). Detalles en [`docs/PROTOCOLO.md`](docs/PROTOCOLO.md).
 
-## Aviso
+## Aviso legal
 
-Úsalo bajo tu responsabilidad y con tus propios droides. Revisa la legislación de tu país sobre ingeniería inversa para interoperabilidad antes de analizar un APK.
-
-## Herramientas utilizadas
-
-Parte del análisis y del desarrollo se hizo con ayuda de herramientas de Anthropic.
+- **Sin material de terceros:** el repositorio no contiene el APK de la app oficial, ni su código, audio, imágenes, animaciones ni firmware. Solo hay código propio y datos de interoperabilidad (identificadores de comando, UUIDs y tablas de números de sonidos y animaciones).
+- **Interoperabilidad:** el protocolo se averiguó analizando la app para que droides que ya posees funcionen con otros programas. Revisa la legislación de tu país sobre ingeniería inversa antes de analizar un APK por tu cuenta.
+- **Tu responsabilidad:** úsalo con tus propios droides y bajo tu responsabilidad. La actualización de firmware no está incluida a propósito.
+- **Licencias de terceros:** el escritorio incluye librerías de código abierto; sus avisos de licencia están en [`desktop/THIRD-PARTY-LICENSES.txt`](desktop/THIRD-PARTY-LICENSES.txt) y se incluyen en cada archivo descargable.
+- **Titulares de derechos:** si crees que algo de este repositorio infringe tus derechos, abre un *issue* y se revisará.
 
 ## Licencia
 

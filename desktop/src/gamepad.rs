@@ -183,8 +183,19 @@ fn default_mapping() -> BTreeMap<PadButton, PadAction> {
     ])
 }
 
+/// Carpeta de configuración del usuario, según el sistema.
 fn config_path() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", "r2control").map(|d| d.config_dir().join("gamepad.txt"))
+    const APP: &str = "sphero-droids-open-control";
+    let base = if cfg!(target_os = "windows") {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"))
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+    };
+    base.map(|b| b.join(APP).join("gamepad.txt"))
 }
 
 impl Pad {
