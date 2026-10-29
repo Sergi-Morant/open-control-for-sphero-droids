@@ -24,7 +24,7 @@ def animations(robot_type):
     out = []
     for d in table("RobotAnimatorAnimationDefinitions.csv"):
         if d["Robot Type"] == robot_type and d["Enabled"] == "1":
-            name = d["Animation Name"].removesuffix(".bin").split("_", 1)[-1].replace("_", " ")
+            name = d["Animation Name"].removesuffix(".bin")
             cat = d["Categorization"].strip().split("&")[0] or "Other"
             secs = float(d["Time"]) if d["Time"] else 3.0
             out.append((name, int(d["AnimationID"]), cat, secs))

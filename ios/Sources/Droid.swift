@@ -57,6 +57,7 @@ final class Droid: NSObject, ObservableObject, Identifiable {
     @Published var versions: [String: String] = [:]
     @Published var routingText = "sin detectar"
     @Published var busy = false                 // reproduciendo una animación
+    @Published var rssi: Int?                   // señal Bluetooth medida desde el iPhone (dBm)
     @Published var chatter = false
     @Published var reactToHits = true
     @Published var idleAnimations = false
@@ -221,6 +222,9 @@ final class Droid: NSObject, ObservableObject, Identifiable {
         if kind.usesV2 { send(st: false, Device.power, deep ? 0x00 : 0x01) }
         else { send1(0x00, 0x22, [0, 0, 0, 0, 0]) }
     }
+
+    /// Pide la intensidad de señal; el resultado llega a `rssi`.
+    func readRSSI() { if link == .ready { peripheral.readRSSI() } }
 
     func requestBattery() {
         if kind.usesV2 {
@@ -455,6 +459,10 @@ final class Droid: NSObject, ObservableObject, Identifiable {
 // MARK: - CoreBluetooth
 
 extension Droid: CBPeripheralDelegate {
+    func peripheral(_ p: CBPeripheral, didReadRSSI RSSI: NSNumber, error: Error?) {
+        if error == nil, RSSI.intValue != 127 { rssi = RSSI.intValue }   // 127 = no disponible
+    }
+
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
         let services = p.services ?? []
         pendingServices = services.count

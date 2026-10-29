@@ -9,3 +9,5 @@ apk_extract/
 jadx_out/
 cs_out/
 cs_firstpass/
+# Rust
+desktop/target/

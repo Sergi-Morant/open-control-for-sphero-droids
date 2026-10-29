@@ -2,13 +2,12 @@ import SwiftUI
 
 struct DriveView: View {
     @ObservedObject var droid: Droid
-    @State private var maxSpeed = 0.6
+    @ObservedObject var pad: GamepadController
     @State private var turbo = false
     @State private var reverse = false
     @State private var stabilize = true
     @State private var aiming = false
     @State private var aimHeading = 0.0
-    @State private var dome = 0.0
     @State private var speed = 0
     @State private var heading = 0
     @State private var driveTimer: Timer?
@@ -28,7 +27,7 @@ struct DriveView: View {
 
                 Joystick { x, y in
                     let mag = min(1, hypot(x, y))
-                    speed = mag > 0.1 ? Int(mag * 255 * (turbo ? 1 : maxSpeed)) : 0
+                    speed = mag > 0.1 ? Int(mag * 255 * (turbo || pad.turbo ? 1 : pad.maxSpeed)) : 0
                     if mag > 0.1 {
                         var deg = atan2(x, -y) * 180 / .pi
                         if deg < 0 { deg += 360 }
@@ -49,8 +48,8 @@ struct DriveView: View {
                     Button("Impulso (boost)") { droid.boostV1(heading: heading) }.buttonStyle(.bordered)
                 }
                 VStack(alignment: .leading) {
-                    Text("Velocidad máxima: \(Int(maxSpeed * 100)) %")
-                    Slider(value: $maxSpeed, in: 0.2...1)
+                    Text("Velocidad máxima: \(Int(pad.maxSpeed * 100)) %")
+                    Slider(value: $pad.maxSpeed, in: 0.15...1)
                 }
                 Toggle("Estabilización", isOn: $stabilize).onChange(of: stabilize) { _, v in droid.setStabilization(v) }
 
@@ -67,8 +66,8 @@ struct DriveView: View {
                 }
 
                 if droid.kind.hasDome {
-                    GroupBox("Cúpula: \(Int(dome))°") {
-                        Slider(value: $dome, in: -160...180).onChange(of: dome) { _, v in droid.setDome(Float(v)) }
+                    GroupBox("Cúpula: \(Int(pad.dome))°") {
+                        Slider(value: Binding(get: { pad.dome }, set: { pad.dome = $0; droid.setDome(Float($0)) }), in: -160...180)
                     }
                 }
             }

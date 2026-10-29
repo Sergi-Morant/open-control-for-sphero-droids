@@ -66,6 +66,9 @@ enum DroidKind: String, CaseIterable, Identifiable {
 }
 
 extension DroidAnimation {
+    /// Nombre en español con el original entre paréntesis.
+    var title: String { Spanish.titleWithOriginal(name) }
+
     var categoryTitle: String {
         switch category {
         case "Emote": return "Emociones"
@@ -79,6 +82,10 @@ extension DroidAnimation {
 }
 
 extension DroidSound {
+    /// Nombre en español con el original entre paréntesis.
+    var title: String { Spanish.titleWithOriginal(name) }
+    var groupTitle: String { Spanish.title(group) }
+
     /// Grupo del sonido a partir de su nombre ("R2_Chatty_12" → "Chatty").
     var group: String {
         var n = name.replacingOccurrences(of: "Play_BB9E_", with: "").replacingOccurrences(of: "R2_", with: "")

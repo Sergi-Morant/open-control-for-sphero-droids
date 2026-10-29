@@ -77,6 +77,7 @@ struct SettingsView: View {
 struct EnergyView: View {
     @EnvironmentObject var manager: DroidManager
     @ObservedObject var droid: Droid
+    @ObservedObject private var keeper = BackgroundKeeper.shared
 
     var body: some View {
         Form {
@@ -85,6 +86,13 @@ struct EnergyView: View {
                 Button("Dormir") { droid.sleep() }
                 if droid.kind.usesV2 { Button("Sueño profundo") { droid.sleep(deep: true) } }
                 Button("Desconectar", role: .destructive) { manager.disconnect(droid) }
+            }
+
+            Section {
+                Toggle("Seguir activo con la pantalla bloqueada", isOn: $keeper.keepAlive)
+                Toggle("No bloquear la pantalla automáticamente", isOn: $keeper.keepScreenOn)
+            } header: { Text("Segundo plano") } footer: {
+                Text("Mientras estén activos los modos automáticos, la voz o el seguimiento, la app sigue funcionando con el iPhone bloqueado (reproduce silencio para que iOS no la suspenda). Gasta más batería y el iPhone mostrará el indicador de audio.")
             }
         }
     }

@@ -23,7 +23,7 @@ struct EmotesView: View {
                     Section(title) {
                         ForEach(items) { a in
                             Button { droid.play(a) } label: {
-                                HStack { Text(a.name); Spacer(); Text(String(format: "%.1f s", a.seconds)).foregroundStyle(.secondary) }
+                                HStack { Text(a.title); Spacer(); Text(String(format: "%.1f s", a.seconds)).foregroundStyle(.secondary) }
                             }
                             .disabled(droid.busy)
                         }
@@ -36,12 +36,14 @@ struct EmotesView: View {
 
 struct SoundsView: View {
     @ObservedObject var droid: Droid
+    @ObservedObject var loop: EmoteLoopController
     @State private var volume = 150.0
     @State private var search = ""
 
     private var groups: [(String, [DroidSound])] {
-        let filtered = droid.kind.sounds.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }
-        return Dictionary(grouping: filtered, by: \.group).sorted { $0.key < $1.key }
+        let filtered = droid.kind.sounds.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) }
+        return Dictionary(grouping: filtered, by: \.groupTitle).sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
+            .map { ($0.key, $0.value.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) }
     }
 
     var body: some View {
@@ -59,13 +61,14 @@ struct SoundsView: View {
                     Button("Parar audio", role: .destructive, action: droid.stopAudio)
                     TextField("Buscar sonido", text: $search).textInputAutocapitalization(.never)
                 }
+                if !droid.kind.animations.isEmpty { AutoEmoteSections(droid: droid, loop: loop) }
                 if droid.kind == .r2q5 {
                     Text("El R2-Q5 usa aquí la lista de sonidos del R2-D2; si alguno no suena, avísame.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 ForEach(groups, id: \.0) { title, items in
                     Section("\(title) (\(items.count))") {
-                        ForEach(items) { s in Button(s.name) { droid.play(s) } }
+                        ForEach(items) { s in Button(s.title) { droid.play(s) } }
                     }
                 }
             }

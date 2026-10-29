@@ -60,7 +60,7 @@ final class PatrolController: ObservableObject {
                 let anim = pool.randomElement() ?? d.kind.animations.filter { $0.category == "Emote" }.randomElement()
                 if let a = anim {
                     d.play(a)
-                    log("Alarma: \(a.name)")
+                    log("Alarma: \(Spanish.title(a.name))")
                     phase = .alarm(now.addingTimeInterval(a.seconds + 0.5))
                 } else {
                     phase = .settling(now.addingTimeInterval(0.5))
@@ -227,7 +227,129 @@ final class EmoteLoopController: ObservableObject {
         guard let anim = (all.count > 1 ? all.filter { $0.index != last } : all).randomElement() else { return }
         d.play(anim)
         last = anim.index
-        lastPlayed = anim.name
+        lastPlayed = Spanish.title(anim.name)
         nextAt = Date().addingTimeInterval(mode == .wwm ? wwmInterval : emotionsInterval)
+    }
+}
+
+// MARK: - Seguir al móvil
+
+/// Sigue al iPhone usando solo la intensidad de la señal Bluetooth (RSSI).
+/// El RSSI no da dirección y fluctúa mucho, así que se hace "avanzar y rectificar": el droide avanza,
+/// corrige el rumbo con giros suaves si la señal empeora poco a poco, y solo da media vuelta si cae de golpe.
+/// Es aproximado y funciona mejor en un espacio despejado.
+final class FollowController: ObservableObject {
+    private enum Phase { case forward, settling(Date), arrived }
+
+    @Published var running = false
+    @Published var smoothed: Double?
+    @Published var status = "Detenido"
+    @Published var nearThreshold = -55.0   // dBm; por encima de esto se considera «ya he llegado»
+    @Published var speed = 45.0
+
+    private let window = 3.0          // segundos entre comprobaciones de la tendencia
+    private let mildDrop = -2.5       // dB: empeora un poco → giro suave
+    private let sharpDrop = -6.0      // dB: caída brusca → media vuelta
+    private let lostLevel = -85.0     // dBm: por debajo se para para no perder al droide
+    private var turnSign = 1
+    private var corrected = false
+
+    private weak var droid: Droid?
+    private var timer: Timer?
+    private var rssiSub: AnyCancellable?
+    private var hitSub: AnyCancellable?
+    private var phase = Phase.forward
+    private var heading = 0
+    private var lastEval: Double?
+    private var nextEval = Date()
+    private var ticks = 0
+
+    deinit { timer?.invalidate() }
+
+    func start(_ d: Droid) {
+        stop()
+        droid = d
+        running = true
+        phase = .forward
+        heading = 0
+        smoothed = nil
+        lastEval = nil
+        nextEval = Date().addingTimeInterval(window)
+        corrected = false
+        status = "Esperando señal…"
+        d.configureCollisions()
+        rssiSub = d.$rssi.compactMap { $0 }.sink { [weak self] v in self?.ingest(Double(v)) }
+        hitSub = d.collision.sink { [weak self] in self?.onHit() }
+        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in self?.tick() }
+    }
+
+    func stop() {
+        timer?.invalidate(); timer = nil
+        rssiSub = nil; hitSub = nil
+        if running { droid?.stop(heading: heading) }
+        running = false
+        status = "Detenido"
+    }
+
+    /// Coloca el droide junto al móvil y úsalo para fijar qué señal significa «cerca».
+    func calibrateNear() {
+        if let s = smoothed { nearThreshold = (s - 2).rounded() }
+    }
+
+    private func ingest(_ v: Double) {
+        smoothed = smoothed.map { 0.75 * $0 + 0.25 * v } ?? v
+    }
+
+    private func onHit() {
+        guard running else { return }
+        heading = (heading + Int.random(in: 120...240)) % 360
+        phase = .settling(Date().addingTimeInterval(1.0))
+        status = "Obstáculo: cambio de rumbo"
+    }
+
+    private func tick() {
+        guard let d = droid, d.isReady else { stop(); return }
+        ticks += 1
+        if ticks % 5 == 0 { d.readRSSI() }
+        guard let s = smoothed else { return }
+        let now = Date()
+        switch phase {
+        case .arrived:
+            d.stop(heading: heading)
+            status = "He llegado (\(Int(s)) dBm)"
+            if s < nearThreshold - 6 { phase = .forward; lastEval = s; nextEval = now.addingTimeInterval(window) }
+        case let .settling(until):
+            d.drive(speed: 0, heading: heading)
+            if now >= until { phase = .forward; lastEval = s; nextEval = now.addingTimeInterval(window) }
+        case .forward:
+            if s >= nearThreshold { phase = .arrived; return }
+            if s <= lostLevel {
+                stop()
+                status = "Señal muy débil (\(Int(s)) dBm): parado para no perderlo"
+                return
+            }
+            d.drive(speed: Int(speed), heading: heading)
+            status = "Buscando… (\(Int(s)) dBm)"
+            guard now >= nextEval else { return }
+            let delta = s - (lastEval ?? s)
+            lastEval = s
+            nextEval = now.addingTimeInterval(window)
+            if delta < sharpDrop {
+                // Caída brusca: vamos claramente en mala dirección.
+                heading = (heading + 150 + Int.random(in: -30...30) + 360) % 360
+                phase = .settling(now.addingTimeInterval(0.6))
+                corrected = false
+                status = "Caída brusca: media vuelta"
+            } else if delta < mildDrop {
+                // Empeora un poco: giro suave sin parar. Si ya se corrigió y sigue peor, se prueba el otro lado.
+                if corrected { turnSign = -turnSign }
+                heading = (heading + turnSign * (corrected ? 60 : 30) + 360) % 360
+                corrected = true
+                status = "Corrigiendo rumbo (\(Int(s)) dBm)"
+            } else {
+                corrected = false   // estable o mejora: seguimos recto
+            }
+        }
+
     }
 }

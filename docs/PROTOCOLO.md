@@ -214,7 +214,7 @@ Las animaciones se lanzan con su **`AnimationID`** (`RobotAnimatorAnimationDefin
 
 El R2-Q5 no tiene tabla de sonidos propia en el APK; la app reutiliza la del R2-D2 **[sin confirmar]**.
 
-`tools/gen_catalog.py` regenera `Catalog.swift` a partir de esos CSV (rutas dentro del APK: `assets/CMS/StaticData/`).
+`tools/gen_catalog.py` regenera `ios/Sources/Catalog.swift` y `desktop/tools/gen_catalog.py` regenera `desktop/src/catalog.rs`, ambos a partir de esos CSV (rutas dentro del APK: `assets/CMS/StaticData/`).
 
 ## 8. Reproducir el análisis
 
@@ -230,7 +230,8 @@ python3 -m venv venv && venv/bin/pip install pyelftools
 venv/bin/python tools/dump_ids.py apk_extract/lib/armeabi-v7a/libCore.so
 
 # Catálogo de sonidos y animaciones
-python3 tools/gen_catalog.py apk_extract/assets/CMS/StaticData R2Control/Sources/Catalog.swift
+python3 tools/gen_catalog.py apk_extract/assets/CMS/StaticData ios/Sources/Catalog.swift
+python3 desktop/tools/gen_catalog.py apk_extract/assets/CMS/StaticData desktop/src/catalog.rs
 ```
 
 ## 9. Por confirmar

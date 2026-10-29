@@ -15,6 +15,9 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.sergio.r2control
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Info-extra.plist
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Para que puedas dar órdenes de voz al droide."
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "Para reconocer las órdenes de voz que le das al droide."
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "Para conectar con tu droide R2-D2 por Bluetooth."
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES

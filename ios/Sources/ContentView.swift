@@ -130,24 +130,48 @@ struct DroidChip: View {
 
 struct DroidTabs: View {
     @ObservedObject var droid: Droid
+    @StateObject private var loop = EmoteLoopController()
+    @StateObject private var follow = FollowController()
+    @StateObject private var voice = VoiceController()
+    @StateObject private var pad = GamepadController()
+
+    /// Detiene todo lo que la app haya puesto en marcha (también lo iniciado por voz).
+    private func stopAll() {
+        loop.stop()
+        follow.stop()
+        droid.setChatter(false)
+        droid.stopAnimation()
+        droid.stopAudio()
+        droid.stop()
+    }
 
     var body: some View {
-        TabView {
-            DriveView(droid: droid).tabItem { Label("Conducir", systemImage: "gamecontroller") }
-            EmotesView(droid: droid).tabItem { Label("Emociones", systemImage: "face.smiling") }
-            AutoEmotesView(droid: droid).tabItem { Label("Automático", systemImage: "repeat") }
-            SoundsView(droid: droid).tabItem { Label("Sonidos", systemImage: "speaker.wave.2") }
-            PatrolView(droid: droid).tabItem { Label("Patrulla", systemImage: "binoculars") }
-            DrawDriveView(droid: droid).tabItem { Label("Dibujar", systemImage: "scribble") }
-            LightsView(droid: droid).tabItem { Label("Luces", systemImage: "lightbulb") }
-            EnergyView(droid: droid).tabItem { Label("Energía", systemImage: "power") }
-            SettingsView(droid: droid).tabItem { Label("Ajustes", systemImage: "gearshape") }
-            LogView(droid: droid).tabItem { Label("Log", systemImage: "terminal") }
-        }
-        .overlay(alignment: .top) {
-            if !droid.isReady {
-                Text(droid.status).font(.footnote).padding(6).frame(maxWidth: .infinity).background(.orange.opacity(0.3))
+        VStack(spacing: 0) {
+            VoiceBar(voice: voice, droid: droid, loop: loop, follow: follow, stopAll: stopAll)
+            TabView {
+                DriveView(droid: droid, pad: pad).tabItem { Label("Conducir", systemImage: "gamecontroller") }
+                EmotesView(droid: droid).tabItem { Label("Emociones", systemImage: "face.smiling") }
+                AutoEmotesView(droid: droid, loop: loop).tabItem { Label("Automático", systemImage: "repeat") }
+                SoundsView(droid: droid, loop: loop).tabItem { Label("Sonidos", systemImage: "speaker.wave.2") }
+                FollowView(droid: droid, follow: follow).tabItem { Label("Seguir", systemImage: "figure.walk") }
+                PatrolView(droid: droid).tabItem { Label("Patrulla", systemImage: "binoculars") }
+                DrawDriveView(droid: droid).tabItem { Label("Dibujar", systemImage: "scribble") }
+                LightsView(droid: droid).tabItem { Label("Luces", systemImage: "lightbulb") }
+                GamepadView(pad: pad).tabItem { Label("Mando", systemImage: "gamecontroller.fill") }
+                EnergyView(droid: droid).tabItem { Label("Energía", systemImage: "power") }
+                SettingsView(droid: droid).tabItem { Label("Ajustes", systemImage: "gearshape") }
+                LogView(droid: droid).tabItem { Label("Log", systemImage: "terminal") }
+            }
+            .overlay(alignment: .top) {
+                if !droid.isReady {
+                    Text(droid.status).font(.footnote).padding(6).frame(maxWidth: .infinity).background(.orange.opacity(0.3))
+                }
             }
         }
+        .onAppear {
+            voice.configure(droid: droid, loop: loop, follow: follow)
+            pad.start(droid: droid, loop: loop, stopAll: stopAll)
+        }
+        .onDisappear { voice.stop(); loop.stop(); follow.stop(); pad.stop() }
     }
 }
