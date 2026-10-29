@@ -22,6 +22,7 @@ Si pruebas alguno de los que faltan, abre un *issue* con el log (pestaña **Log 
 - **Conexión:** busca los cuatro tipos de droide por el prefijo de su nombre BLE (`BB-`, `D2-`, `GB-`, `Q5-`) y permite tener varios conectados a la vez.
 - **Conducir:** joystick con límite de velocidad, turbo, marcha atrás, estabilización, modo apuntado («fijar adelante») y el impulso de BB-8. Cúpula y patas (3 patas, 2 patas, contoneo) en R2-D2 y R2-Q5.
 - **Emociones:** las animaciones de cada droide (R2-D2 55, R2-Q5 50, BB-9E 44) con su duración.
+- **Automático:** lanza al azar los emotes de «Reacciones (Watch With Me)» o de «Emociones» cada N segundos (3 a 120), con opción de incluir o no el Ion Blast y botón de iniciar/apagar.
 - **Sonidos:** catálogo del droide con buscador, volumen y charla aleatoria.
 - **Patrulla:** el droide avanza solo, retrocede y gira al chocar, lanza alarmas y deja un registro de eventos.
 - **Dibujar:** dibujas un recorrido en pantalla y el droide lo sigue (por tiempo; requiere calibración).

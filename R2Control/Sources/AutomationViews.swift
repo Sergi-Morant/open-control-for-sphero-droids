@@ -111,3 +111,52 @@ struct LightsView: View {
         return (UInt8(r * 255), UInt8(g * 255), UInt8(b * 255))
     }
 }
+
+struct AutoEmotesView: View {
+    @ObservedObject var droid: Droid
+    @StateObject private var loop = EmoteLoopController()
+
+    private var hasIonBlast: Bool { droid.kind.animations.contains(where: EmoteLoopController.isIonBlast) }
+
+    var body: some View {
+        if droid.kind.animations.isEmpty {
+            ContentUnavailableView("Sin animaciones", systemImage: "face.dashed",
+                                   description: Text("BB-8 no tiene animaciones en esta app."))
+        } else {
+            Form {
+                Section {
+                    interval($loop.wwmInterval)
+                    startButton(.wwm)
+                } header: { Text("Reacciones (Watch With Me) · \(loop.pool(droid, .wwm).count) emotes") }
+
+                Section {
+                    interval($loop.emotionsInterval)
+                    if hasIonBlast { Toggle("Incluir Ion Blast", isOn: $loop.includeIonBlast) }
+                    startButton(.emotions)
+                } header: { Text("Emociones · \(loop.pool(droid, .emotions).count) emotes") }
+
+                Section {
+                    if loop.running != nil { Label("Último: \(loop.lastPlayed.isEmpty ? "—" : loop.lastPlayed)", systemImage: "play.circle") }
+                } footer: {
+                    Text("Elige un emote al azar cada cierto tiempo. Si el emote dura más que el intervalo, espera a que acabe. Mover el joystick cancela el emote en curso. Al apagar, el emote que está sonando termina solo.")
+                }
+            }
+        }
+    }
+
+    private func interval(_ value: Binding<Double>) -> some View {
+        VStack(alignment: .leading) {
+            Text("Cada \(Int(value.wrappedValue)) s")
+            Slider(value: value, in: 3...120, step: 1)
+        }
+    }
+
+    private func startButton(_ mode: EmoteLoopController.Mode) -> some View {
+        let on = loop.running == mode
+        return Button(on ? "Apagar" : "Iniciar") {
+            if on { loop.stop() } else { loop.start(mode, on: droid) }
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(on ? .red : .accentColor)
+    }
+}

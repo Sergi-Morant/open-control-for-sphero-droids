@@ -135,6 +135,7 @@ struct DroidTabs: View {
         TabView {
             DriveView(droid: droid).tabItem { Label("Conducir", systemImage: "gamecontroller") }
             EmotesView(droid: droid).tabItem { Label("Emociones", systemImage: "face.smiling") }
+            AutoEmotesView(droid: droid).tabItem { Label("Automático", systemImage: "repeat") }
             SoundsView(droid: droid).tabItem { Label("Sonidos", systemImage: "speaker.wave.2") }
             PatrolView(droid: droid).tabItem { Label("Patrulla", systemImage: "binoculars") }
             DrawDriveView(droid: droid).tabItem { Label("Dibujar", systemImage: "scribble") }

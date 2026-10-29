@@ -176,3 +176,58 @@ final class DrawDriveController: ObservableObject {
         return d
     }
 }
+
+// MARK: - Emotes automáticos
+
+/// Lanza emotes al azar cada cierto número de segundos. Solo hay un modo activo a la vez.
+final class EmoteLoopController: ObservableObject {
+    enum Mode { case wwm, emotions }
+
+    @Published var running: Mode?
+    @Published var wwmInterval = 15.0
+    @Published var emotionsInterval = 15.0
+    @Published var includeIonBlast = false
+    @Published var lastPlayed = ""
+
+    private weak var droid: Droid?
+    private var timer: Timer?
+    private var nextAt = Date()
+    private var last: UInt16?
+
+    deinit { timer?.invalidate() }
+
+    static func isIonBlast(_ a: DroidAnimation) -> Bool { a.name.localizedCaseInsensitiveContains("IonBlast") }
+
+    func pool(_ droid: Droid, _ mode: Mode) -> [DroidAnimation] {
+        switch mode {
+        case .wwm: return droid.kind.animations.filter { $0.category == "WWM" }
+        case .emotions: return droid.kind.animations.filter { $0.category == "Emote" && (includeIonBlast || !Self.isIonBlast($0)) }
+        }
+    }
+
+    func start(_ mode: Mode, on d: Droid) {
+        stop()
+        droid = d
+        running = mode
+        nextAt = Date()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in self?.tick() }
+    }
+
+    /// Para el bucle. La animación en curso termina sola.
+    func stop() {
+        timer?.invalidate(); timer = nil
+        running = nil
+    }
+
+    private func tick() {
+        guard let d = droid, d.isReady, let mode = running else { stop(); return }
+        // Si la animación anterior dura más que el intervalo, se espera a que acabe.
+        guard Date() >= nextAt, !d.busy else { return }
+        let all = pool(d, mode)
+        guard let anim = (all.count > 1 ? all.filter { $0.index != last } : all).randomElement() else { return }
+        d.play(anim)
+        last = anim.index
+        lastPlayed = anim.name
+        nextAt = Date().addingTimeInterval(mode == .wwm ? wwmInterval : emotionsInterval)
+    }
+}
