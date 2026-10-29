@@ -66,16 +66,25 @@ struct SettingsView: View {
                 }
             }
 
+            Section("No incluido") {
+                Text("Actualización de firmware (OTA), realidad aumentada, tienda, Force Band y sincronía de Watch With Me con películas: dependen de servicios o recursos de la app original, o pueden dejar el droide inservible si fallan.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+struct EnergyView: View {
+    @EnvironmentObject var manager: DroidManager
+    @ObservedObject var droid: Droid
+
+    var body: some View {
+        Form {
             Section("Energía") {
                 Button("Despertar", action: droid.wake)
                 Button("Dormir") { droid.sleep() }
                 if droid.kind.usesV2 { Button("Sueño profundo") { droid.sleep(deep: true) } }
                 Button("Desconectar", role: .destructive) { manager.disconnect(droid) }
-            }
-
-            Section("No incluido") {
-                Text("Actualización de firmware (OTA), realidad aumentada, tienda, Force Band y sincronía de Watch With Me con películas: dependen de servicios o recursos de la app original, o pueden dejar el droide inservible si fallan.")
-                    .font(.footnote).foregroundStyle(.secondary)
             }
         }
     }

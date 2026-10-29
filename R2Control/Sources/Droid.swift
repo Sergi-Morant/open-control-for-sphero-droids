@@ -90,9 +90,31 @@ final class Droid: NSObject, ObservableObject, Identifiable {
         collision.sink { [weak self] in self?.handleHit() }.store(in: &cancellables)
     }
 
+    private static let clock: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
+
     func note(_ s: String) {
-        log.append(s)
-        if log.count > 400 { log.removeFirst(150) }
+        log.append("\(Self.clock.string(from: Date())) \(s)")
+        if log.count > 600 { log.removeFirst(200) }
+    }
+
+    /// Códigos de error de la API v2 (el 8 se observó en un R2-D2 real al conducir durante una animación).
+    private static let errorNames: [UInt8: String] = [
+        1: "DID no válido", 2: "CID no válido", 3: "no implementado", 4: "restringido", 5: "longitud de datos incorrecta",
+        6: "falló", 7: "parámetro no válido", 8: "ocupado", 9: "destino no válido", 10: "destino no disponible",
+    ]
+    private var lastError = ""
+    private var lastErrorAt = Date.distantPast
+
+    private func noteError(_ e: UInt8, did: UInt8, cid: UInt8) {
+        let key = String(format: "%02X/%02X e%d", did, cid, e)
+        let now = Date()
+        guard key != lastError || now.timeIntervalSince(lastErrorAt) > 3 else { return }  // no repetir al conducir a 10 Hz
+        lastError = key; lastErrorAt = now
+        note("✗ error \(e) (\(Self.errorNames[e] ?? "?")) en \(String(format: "%02X/%02X", did, cid))")
     }
 
     // MARK: - Ciclo de vida (lo llama DroidManager)
@@ -228,6 +250,8 @@ final class Droid: NSObject, ObservableObject, Identifiable {
         let s = UInt8(max(0, min(255, speed)))
         let h = Int(((heading % 360) + 360) % 360)
         if kind.usesV2 {
+            // El droide rechaza conducir (error 8, ocupado) mientras reproduce una animación: se cancela.
+            if busy, s > 0 { stopAnimation() }
             send(st: true, Device.driving, 0x07, [s] + be16(UInt16(h)) + [reverse ? 1 : 0], quiet: true)
         } else {
             send1(0x02, 0x30, [s] + be16(UInt16(h)) + [s == 0 ? 0 : 1, reverse ? 1 : 0], quiet: true)
@@ -375,7 +399,7 @@ final class Droid: NSObject, ObservableObject, Identifiable {
             }
             return
         }
-        if p.isResponse, let e = p.error, e != 0 { note("✗ error \(e) en \(String(format: "%02X/%02X", p.did, p.cid))") }
+        if p.isResponse, let e = p.error, e != 0 { noteError(e, did: p.did, cid: p.cid) }
 
         switch (p.did, p.cid) {
         case (Device.power, 0x04), (Device.power, 0x06):
@@ -391,6 +415,8 @@ final class Droid: NSObject, ObservableObject, Identifiable {
         case (Device.animatronics, 0x11):
             busy = false
         default:
+            // Los acuses correctos y vacíos (uno por cada orden de conducción) solo meterían ruido.
+            if p.isResponse, p.error == 0, p.payload.isEmpty { break }
             note("← \(String(format: "%02X/%02X", p.did, p.cid)) \(p.payload.hex)")
         }
     }

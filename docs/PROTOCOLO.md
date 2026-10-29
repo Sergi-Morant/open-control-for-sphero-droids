@@ -76,21 +76,55 @@ Sin el paso 3 el droide ignora los comandos.
 - **Respuestas:** tras `seq` viene un byte de error (`0` = correcto) y después el payload.
 - Valores multibyte en *big-endian*. Los `float` son IEEE-754 de 32 bits *big-endian*. **[APK]** (ver `Array.Reverse` en las clases `Command`)
 
-### Direcciones de destino: pendiente
+### Direcciones de destino **[probado en R2-D2]**
 
 El droide tiene dos procesadores: **Nordic** (Bluetooth, energía, información del sistema) y **ST** (movimiento, animaciones, audio, LEDs, sensores).
-El byte que identifica cada uno y la presencia de *source* los construye código nativo y **no se pudieron leer del APK**.
+El byte que identifica cada uno lo construye código nativo y no se pudo leer del APK, así que se averiguó en un R2-D2 real (firmware Nordic 7.0.101, principal 7.1.86):
 
-La app prueba al conectar cuatro esquemas enviando un *Ping* (`0x10/0x00`) al ST y se queda con el primero que responda sin error:
+| Nordic | ST | *source* | flags |
+|---|---|---|---|
+| `0x01` | `0x02` | no | `0x12` (`0x02` pide respuesta + `0x10` lleva *target*) |
+
+Ejemplo, conducir con rumbo (`0x16/0x07`) a velocidad 0:
+
+```
+8D 12 02 16 07 <seq> 00 00 00 00 <chk> D8
+   │  │  └──┴─ did/cid
+   │  └─ target = ST
+   └─ flags
+```
+
+Para droides cuyo esquema pudiera ser distinto (BB-9E, R2-Q5), la app prueba al conectar cuatro variantes enviando un *Ping* (`0x10/0x00`) al ST y se queda con la primera que responda sin error. Empieza por la confirmada:
 
 | # | Nordic | ST | Con *source* |
 |---|---|---|---|
-| 1 | `0x11` | `0x12` | sí |
-| 2 | `0x01` | `0x02` | sí |
-| 3 | `0x01` | `0x02` | no |
+| 1 | `0x01` | `0x02` | no |
+| 2 | `0x11` | `0x12` | sí |
+| 3 | `0x01` | `0x02` | sí |
 | 4 | `0x11` | `0x12` | no |
 
-El resultado se guarda y se muestra en Ajustes › Direcciones y en el log. Si lo averiguas en tu droide, compártelo en un *issue*.
+El resultado se guarda y se muestra en Ajustes › Direcciones y en el log. Si lo compruebas en BB-9E o R2-Q5, cuéntalo en un *issue*.
+
+### Códigos de error de las respuestas
+
+Tras `seq` el primer byte de una respuesta es el código de error (`0` = correcto). Tabla **[público]**; el `8` se observó en un R2-D2:
+
+| Código | Significado |
+|---|---|
+| `1` | DID no válido |
+| `2` | CID no válido |
+| `3` | no implementado |
+| `4` | restringido |
+| `5` | longitud de datos incorrecta |
+| `6` | falló |
+| `7` | parámetro no válido |
+| `8` | **ocupado** |
+| `9` | destino no válido |
+| `10` | destino no disponible |
+
+**El R2-D2 responde «ocupado» a las órdenes de conducción (`0x16/0x07`) mientras reproduce una animación.** Hay que cancelarla con `0x17/0x2B` antes de conducir.
+
+Cada orden de conducción recibe una respuesta vacía con error `0`; a 10 Hz inunda el log, por lo que la app no las registra.
 
 ## 5. Comandos v2
 
@@ -106,7 +140,7 @@ Lista completa en [`tools/sdk_commands.txt`](../tools/sdk_commands.txt) (formato
 | Dormir | Nordic | `0x13` | `0x01` | — |
 | Sueño profundo | Nordic | `0x13` | `0x00` | — |
 | Estado de batería | Nordic | `0x13` | `0x04` | respuesta: estado (`0` cargado, `1` cargando, `2` sin cargar, `3` normal, `4` baja, `5` crítica) |
-| Voltaje de batería | Nordic | `0x13` | `0x03` | respuesta: `u16` (se interpreta como centésimas de voltio, **[sin confirmar]**) |
+| Voltaje de batería | Nordic | `0x13` | `0x03` | respuesta: `u16` en centésimas de voltio (`395` = 3,95 V) **[probado]** |
 | Notificar batería | Nordic | `0x13` | `0x05` | `bool` |
 | Versión Nordic / principal | Nordic | `0x11` | `0x00` / `0x17` | respuesta: 3 × `u16` (mayor, menor, revisión) |
 | Renombrar | Nordic | `0x19` | `0x03` | nombre ASCII |
@@ -201,8 +235,7 @@ python3 tools/gen_catalog.py apk_extract/assets/CMS/StaticData R2Control/Sources
 
 ## 9. Por confirmar
 
-- Bytes de destino y flags de v2 (ver §4).
-- Unidad del voltaje de batería.
-- Asignación de función de las características v1 de BB-8 y funcionamiento completo de BB-8, BB-9E y R2-Q5.
+- Que el esquema de direcciones sea el mismo en BB-9E y R2-Q5.
+- Funcionamiento completo de BB-8 (v1), BB-9E y R2-Q5, y la asignación de función de las características v1.
 - Lista de sonidos del R2-Q5.
 - `0x18/0x14` (aviso de colisión) en v2.

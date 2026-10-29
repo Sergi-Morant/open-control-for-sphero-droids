@@ -21,10 +21,11 @@ struct Routing: Equatable, Codable {
     var st: UInt8
     var withSource: Bool
 
+    /// El primero es el confirmado en un R2-D2 real (Nordic 0x01, ST 0x02, sin source); el resto son alternativas.
     static let candidates: [Routing] = [
+        Routing(nordic: 0x01, st: 0x02, withSource: false),
         Routing(nordic: 0x11, st: 0x12, withSource: true),
         Routing(nordic: 0x01, st: 0x02, withSource: true),
-        Routing(nordic: 0x01, st: 0x02, withSource: false),
         Routing(nordic: 0x11, st: 0x12, withSource: false),
     ]
     var title: String { String(format: "dest %02X/%02X%@", nordic, st, withSource ? " +src" : "") }

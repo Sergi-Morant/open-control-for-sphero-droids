@@ -85,7 +85,9 @@ Para regenerar los datos necesitas tu propio APK (no se distribuye aquí). Detal
 
 ## Qué falta por confirmar
 
-Los bytes de destino de cada procesador y los flags de los paquetes v2 los construye código nativo y no se pudieron leer del APK. La app prueba cuatro combinaciones al conectar y guarda la que el droide acepta. Si compartes tu log (`✓ direcciones detectadas: …`), se podrá fijar el valor correcto.
+En el R2-D2 el direccionamiento v2 es `Nordic 0x01 / ST 0x02`, sin *source*. En BB-9E y R2-Q5 la app prueba cuatro variantes al conectar y guarda la que el droide acepta; si los pruebas, comparte tu log (`✓ direcciones detectadas: …`).
+
+Nota: el R2-D2 rechaza conducir (error «ocupado») mientras reproduce una animación; la app la cancela al mover el joystick.
 
 ## Aviso
 

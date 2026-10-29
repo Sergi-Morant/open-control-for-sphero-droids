@@ -139,6 +139,7 @@ struct DroidTabs: View {
             PatrolView(droid: droid).tabItem { Label("Patrulla", systemImage: "binoculars") }
             DrawDriveView(droid: droid).tabItem { Label("Dibujar", systemImage: "scribble") }
             LightsView(droid: droid).tabItem { Label("Luces", systemImage: "lightbulb") }
+            EnergyView(droid: droid).tabItem { Label("Energía", systemImage: "power") }
             SettingsView(droid: droid).tabItem { Label("Ajustes", systemImage: "gearshape") }
             LogView(droid: droid).tabItem { Label("Log", systemImage: "terminal") }
         }
