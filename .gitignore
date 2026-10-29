@@ -1,0 +1,11 @@
+*.xcodeproj/
+xcuserdata/
+DerivedData/
+build/
+.DS_Store
+# Material de análisis: nunca subir el APK ni lo extraído de él
+*.apk
+apk_extract/
+jadx_out/
+cs_out/
+cs_firstpass/
