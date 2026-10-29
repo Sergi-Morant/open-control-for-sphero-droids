@@ -13,8 +13,8 @@ mod translate;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([980.0, 720.0]).with_title("Sphero droids open control"),
+        viewport: egui::ViewportBuilder::default().with_inner_size([980.0, 720.0]).with_title("Open control for Sphero Droids"),
         ..Default::default()
     };
-    eframe::run_native("Sphero droids open control", options, Box::new(|cc| Ok(Box::new(app::App::new(cc)))))
+    eframe::run_native("Open control for Sphero Droids", options, Box::new(|cc| Ok(Box::new(app::App::new(cc)))))
 }

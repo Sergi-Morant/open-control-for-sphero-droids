@@ -1,5 +1,5 @@
 [package]
-name = "r2control"
+name = "open-control-for-sphero-droids"
 version = "0.1.0"
 edition = "2024"
 description = "Control no oficial de los droides Sphero desde macOS, Linux y Windows"

@@ -1,4 +1,4 @@
-# Sphero droids open control
+# Open control for Sphero Droids
 
 Apps de código abierto para controlar por Bluetooth LE los droides **R2-D2, R2-Q5, BB-9E y BB-8** de Sphero:
 
@@ -85,9 +85,9 @@ cargo run --release
 
 | Sistema | Archivo | Notas |
 |---|---|---|
-| macOS (Intel y Apple Silicon) | `r2control-macos-universal.zip` | App sin notarizar: la primera vez, clic derecho › Abrir. macOS pedirá permiso de Bluetooth |
-| Linux x86_64 | `r2control-linux-x86_64.tar.gz` | Necesita BlueZ (`bluetoothd` activo) |
-| Windows x86_64 | `r2control-windows-x86_64.zip` | Windows 10 o superior con Bluetooth LE |
+| macOS (Intel y Apple Silicon) | `open-control-for-sphero-droids-macos-universal.zip` | App sin notarizar: la primera vez, clic derecho › Abrir. macOS pedirá permiso de Bluetooth |
+| Linux x86_64 | `open-control-for-sphero-droids-linux-x86_64.tar.gz` | Necesita BlueZ (`bluetoothd` activo) |
+| Windows x86_64 | `open-control-for-sphero-droids-windows-x86_64.zip` | Windows 10 o superior con Bluetooth LE |
 
 Para compilar en Linux hacen falta `libdbus-1-dev`, `libudev-dev`, `pkg-config` y las librerías de X11/Wayland (ver `.github/workflows/desktop.yml`).
 

@@ -73,10 +73,10 @@ final class VoiceController: NSObject, ObservableObject {
         error = nil
         SFSpeechRecognizer.requestAuthorization { [weak self] status in
             DispatchQueue.main.async {
-                guard status == .authorized else { self?.error = "Permiso de reconocimiento de voz denegado (Ajustes › Sphero droids open control)"; return }
+                guard status == .authorized else { self?.error = "Permiso de reconocimiento de voz denegado (Ajustes › Open control for Sphero Droids)"; return }
                 AVAudioApplication.requestRecordPermission { granted in
                     DispatchQueue.main.async {
-                        guard granted else { self?.error = "Permiso de micrófono denegado (Ajustes › Sphero droids open control)"; return }
+                        guard granted else { self?.error = "Permiso de micrófono denegado (Ajustes › Open control for Sphero Droids)"; return }
                         self?.begin()
                     }
                 }

@@ -1,22 +1,22 @@
 #!/bin/sh
-# Crea SpheroDroidsOpenControl.app a partir del binario compilado.
+# Crea OpenControlForSpheroDroids.app a partir del binario compilado.
 # macOS exige NSBluetoothAlwaysUsageDescription en el Info.plist: sin él cierra la app al usar Bluetooth.
 # Uso: packaging/macos/bundle.sh <binario> <carpeta de salida> [versión]
 set -eu
 BIN="$1"; OUT="$2"; VERSION="${3:-0.0.0}"
-APP="$OUT/SpheroDroidsOpenControl.app"
+APP="$OUT/OpenControlForSpheroDroids.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
-cp "$BIN" "$APP/Contents/MacOS/r2control"
+cp "$BIN" "$APP/Contents/MacOS/open-control-for-sphero-droids"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleName</key><string>Sphero droids open control</string>
-	<key>CFBundleDisplayName</key><string>Sphero droids open control</string>
+	<key>CFBundleName</key><string>Open control for Sphero Droids</string>
+	<key>CFBundleDisplayName</key><string>Open control for Sphero Droids</string>
 	<key>CFBundleIdentifier</key><string>com.sergio.r2control.desktop</string>
-	<key>CFBundleExecutable</key><string>r2control</string>
+	<key>CFBundleExecutable</key><string>open-control-for-sphero-droids</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleVersion</key><string>$VERSION</string>
 	<key>CFBundleShortVersionString</key><string>$VERSION</string>

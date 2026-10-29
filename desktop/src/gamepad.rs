@@ -185,7 +185,7 @@ fn default_mapping() -> BTreeMap<PadButton, PadAction> {
 
 /// Carpeta de configuración del usuario, según el sistema.
 fn config_path() -> Option<PathBuf> {
-    const APP: &str = "sphero-droids-open-control";
+    const APP: &str = "open-control-for-sphero-droids";
     let base = if cfg!(target_os = "windows") {
         std::env::var_os("APPDATA").map(PathBuf::from)
     } else if cfg!(target_os = "macos") {

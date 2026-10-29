@@ -1,4 +1,4 @@
-Licencias de terceros incluidas en Sphero droids open control (escritorio)
+Licencias de terceros incluidas en Open control for Sphero Droids (escritorio)
 457 librerías de Rust. Texto generado con tools/gen_licenses.py.
 De las que no incluyen archivo de licencia en su paquete se indica su licencia (SPDX) y su repositorio.
 

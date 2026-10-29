@@ -49,8 +49,8 @@ jobs:
         run: |
           cargo build --release
           mkdir -p dist/stage
-          cp target/release/r2control THIRD-PARTY-LICENSES.txt ../LICENSE dist/stage/
-          tar -czf dist/r2control-linux-x86_64.tar.gz -C dist/stage .
+          cp target/release/open-control-for-sphero-droids THIRD-PARTY-LICENSES.txt ../LICENSE dist/stage/
+          tar -czf dist/open-control-for-sphero-droids-linux-x86_64.tar.gz -C dist/stage .
           rm -rf dist/stage
 
       - name: Compilar y empaquetar (Windows)
@@ -59,7 +59,7 @@ jobs:
         run: |
           cargo build --release
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path target/release/r2control.exe, THIRD-PARTY-LICENSES.txt, ../LICENSE -DestinationPath dist/r2control-windows-x86_64.zip
+          Compress-Archive -Path target/release/open-control-for-sphero-droids.exe, THIRD-PARTY-LICENSES.txt, ../LICENSE -DestinationPath dist/open-control-for-sphero-droids-windows-x86_64.zip
 
       - name: Compilar y empaquetar (macOS, universal)
         if: runner.os == 'macOS'
@@ -69,14 +69,14 @@ jobs:
           rustup target add x86_64-apple-darwin aarch64-apple-darwin
           cargo build --release --target aarch64-apple-darwin
           cargo build --release --target x86_64-apple-darwin
-          lipo -create -output r2control-universal target/aarch64-apple-darwin/release/r2control target/x86_64-apple-darwin/release/r2control
+          lipo -create -output open-control-for-sphero-droids-universal target/aarch64-apple-darwin/release/open-control-for-sphero-droids target/x86_64-apple-darwin/release/open-control-for-sphero-droids
           mkdir -p dist
-          packaging/macos/bundle.sh r2control-universal dist "${VERSION#v}"
-          (cd dist && ditto -c -k --keepParent SpheroDroidsOpenControl.app r2control-macos-universal.zip && rm -rf SpheroDroidsOpenControl.app)
+          packaging/macos/bundle.sh open-control-for-sphero-droids-universal dist "${VERSION#v}"
+          (cd dist && ditto -c -k --keepParent OpenControlForSpheroDroids.app open-control-for-sphero-droids-macos-universal.zip && rm -rf OpenControlForSpheroDroids.app)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: r2control-${{ runner.os }}
+          name: open-control-for-sphero-droids-${{ runner.os }}
           path: desktop/dist/*
 
       - name: Adjuntar a la release

@@ -2538,6 +2538,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "open-control-for-sphero-droids"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "btleplug",
+ "eframe",
+ "egui",
+ "fastrand",
+ "futures",
+ "gilrs",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "orbclient"
 version = "0.3.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2889,21 +2904,6 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
-
-[[package]]
-name = "r2control"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "btleplug",
- "eframe",
- "egui",
- "fastrand",
- "futures",
- "gilrs",
- "tokio",
- "uuid",
-]
 
 [[package]]
 name = "range-alloc"

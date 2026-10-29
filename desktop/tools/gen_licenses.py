@@ -11,7 +11,7 @@ meta = json.loads(subprocess.check_output(["cargo", "metadata", "--format-versio
 workspace = set(meta["workspace_members"])
 packages = sorted((p for p in meta["packages"] if p["id"] not in workspace), key=lambda p: (p["name"], p["version"]))
 
-print("Licencias de terceros incluidas en Sphero droids open control (escritorio)")
+print("Licencias de terceros incluidas en Open control for Sphero Droids (escritorio)")
 print(f"{len(packages)} librerías de Rust. Texto generado con tools/gen_licenses.py.")
 print("De las que no incluyen archivo de licencia en su paquete se indica su licencia (SPDX) y su repositorio.\n")
 for p in packages:

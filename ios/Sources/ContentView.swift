@@ -13,7 +13,7 @@ struct ContentView: View {
                     MainView(showConnect: $showConnect)
                 }
             }
-            .navigationTitle("Sphero droids open control")
+            .navigationTitle("Open control for Sphero Droids")
             .navigationBarTitleDisplayMode(.inline)
         }
         .sheet(isPresented: $showConnect) {
