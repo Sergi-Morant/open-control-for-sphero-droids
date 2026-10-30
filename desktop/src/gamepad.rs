@@ -107,13 +107,15 @@ pub enum PadAction {
     ToggleMonkeyBusiness,
     Turbo,
     Boost,
+    AimToggle,
+    DomeCenter,
 }
 
 impl PadAction {
-    pub const ALL: [PadAction; 12] = [
+    pub const ALL: [PadAction; 14] = [
         PadAction::Legs3, PadAction::Legs2, PadAction::Waddle, PadAction::LegsStop, PadAction::StopAll,
         PadAction::SetForward, PadAction::RandomSound, PadAction::RandomEmote, PadAction::ToggleMovie,
-        PadAction::ToggleMonkeyBusiness, PadAction::Turbo, PadAction::Boost,
+        PadAction::ToggleMonkeyBusiness, PadAction::Turbo, PadAction::Boost, PadAction::AimToggle, PadAction::DomeCenter,
     ];
 
     pub fn title(self) -> &'static str {
@@ -130,6 +132,8 @@ impl PadAction {
             PadAction::ToggleMonkeyBusiness => "Haz monerías (activar/apagar)",
             PadAction::Turbo => "Turbo (mientras se mantiene)",
             PadAction::Boost => "Impulso (BB-8)",
+            PadAction::AimToggle => "Apuntar / fijar «adelante» (alternar)",
+            PadAction::DomeCenter => "Centrar la cúpula",
         }
     }
 
@@ -147,6 +151,8 @@ impl PadAction {
             PadAction::ToggleMonkeyBusiness => "monkey",
             PadAction::Turbo => "turbo",
             PadAction::Boost => "boost",
+            PadAction::AimToggle => "aim",
+            PadAction::DomeCenter => "domecenter",
         }
     }
 }
@@ -174,12 +180,15 @@ pub struct Pad {
 }
 
 fn default_mapping() -> BTreeMap<PadButton, PadAction> {
-    // Por defecto: A = 3 patas, B = 2 patas, Y = contoneo, X = parar patas.
+    // Por defecto: A = 3 patas, B = 2 patas, Y = contoneo, X = parar patas,
+    // clic del stick izquierdo = apuntar / fijar «adelante» y clic del derecho = centrar la cúpula.
     BTreeMap::from([
         (PadButton::South, PadAction::Legs3),
         (PadButton::East, PadAction::Legs2),
         (PadButton::North, PadAction::Waddle),
         (PadButton::West, PadAction::LegsStop),
+        (PadButton::LeftStick, PadAction::AimToggle),
+        (PadButton::RightStick, PadAction::DomeCenter),
     ])
 }
 
@@ -275,25 +284,47 @@ impl Pad {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let text: String = self.mapping.iter().map(|(b, a)| format!("{}={}\n", b.key(), a.key())).collect();
-        let _ = std::fs::write(path, text);
+        let body: String = self.mapping.iter().map(|(b, a)| format!("{}={}\n", b.key(), a.key())).collect();
+        let _ = std::fs::write(path, format!("version=2\n{body}"));
     }
 
     fn load(&mut self) {
         let Some(path) = config_path() else { return };
         let Ok(text) = std::fs::read_to_string(path) else { return };
-        let mut map = BTreeMap::new();
-        for line in text.lines() {
-            let Some((k, v)) = line.split_once('=') else { continue };
-            let button = PadButton::ALL.into_iter().find(|b| b.key() == k.trim());
-            let action = PadAction::ALL.into_iter().find(|a| a.key() == v.trim());
-            if let (Some(b), Some(a)) = (button, action) {
-                map.insert(b, a);
+        let (map, migrated) = parse_mapping(&text);
+        self.mapping = map;
+        if migrated {
+            self.save();
+        }
+    }
+}
+
+/// Lee la asignación guardada. Devuelve también si hubo que migrarla de una versión anterior.
+fn parse_mapping(text: &str) -> (BTreeMap<PadButton, PadAction>, bool) {
+    let mut map = BTreeMap::new();
+    let mut version = 1;
+    for line in text.lines() {
+        let Some((k, v)) = line.split_once('=') else { continue };
+        if k.trim() == "version" {
+            version = v.trim().parse().unwrap_or(1);
+            continue;
+        }
+        let button = PadButton::ALL.into_iter().find(|b| b.key() == k.trim());
+        let action = PadAction::ALL.into_iter().find(|a| a.key() == v.trim());
+        if let (Some(b), Some(a)) = (button, action) {
+            map.insert(b, a);
+        }
+    }
+    // Versión 2: los clics de los sticks pasan a apuntar y centrar la cúpula (solo si no estaban asignados).
+    let migrated = version < 2;
+    if migrated {
+        for b in [PadButton::LeftStick, PadButton::RightStick] {
+            if let Some(a) = default_mapping().get(&b) {
+                map.entry(b).or_insert(*a);
             }
         }
-        // Un archivo vacío o sin entradas válidas se interpreta como «sin asignar nada».
-        self.mapping = map;
     }
+    (map, migrated)
 }
 
 /// Zona muerta radial con reescalado, para que el stick no «tiemble» en reposo.
@@ -312,9 +343,10 @@ pub fn heading_of(x: f32, y: f32) -> i32 {
     (x.atan2(y).to_degrees().round() as i32).rem_euclid(360)
 }
 
-/// Posición de la cúpula según el eje X del stick derecho: -160°…180°.
-pub fn dome_of(x: f32) -> f32 {
-    if x >= 0.0 { x * 180.0 } else { x * 160.0 }
+/// Nueva posición de la cúpula tras mantener el stick `x` durante `dt` segundos (-160°…180°).
+/// La curva cuadrática da precisión cerca del centro; a tope barre unos 120°/s.
+pub fn dome_step(current: f32, x: f32, dt: f32) -> f32 {
+    (current + x * x.abs() * 120.0 * dt).clamp(-160.0, 180.0)
 }
 
 #[cfg(test)]
@@ -337,15 +369,37 @@ mod tests {
     }
 
     #[test]
-    fn dome_covers_the_droid_range() {
-        assert_eq!(dome_of(-1.0), -160.0);
-        assert_eq!(dome_of(1.0), 180.0);
-        assert_eq!(dome_of(0.0), 0.0);
+    fn dome_moves_gradually_and_stays_in_range() {
+        assert_eq!(dome_step(0.0, 0.0, 0.1), 0.0); // soltar el stick no mueve ni devuelve la cúpula
+        assert!((dome_step(0.0, 1.0, 0.1) - 12.0).abs() < 1e-4); // a tope, ~120°/s
+        assert!(dome_step(0.0, 0.5, 0.1) < dome_step(0.0, 1.0, 0.1)); // más suave con menos inclinación
+        assert!(dome_step(0.0, -1.0, 0.1) < 0.0);
+        assert_eq!(dome_step(179.0, 1.0, 1.0), 180.0);
+        assert_eq!(dome_step(-159.0, -1.0, 1.0), -160.0);
     }
 
     #[test]
-    fn default_mapping_is_a_b_y_x() {
+    fn old_saved_mapping_gains_stick_clicks_without_losing_user_choices() {
+        // Archivo de la versión 1: sin «version» y con el stick izquierdo ya asignado por el usuario.
+        let (m, migrated) = parse_mapping("south=legs3\nnorth=waddle\nl3=randomsound\n");
+        assert!(migrated);
+        assert_eq!(m[&PadButton::South], PadAction::Legs3);
+        assert_eq!(m[&PadButton::LeftStick], PadAction::RandomSound); // se respeta la elección del usuario
+        assert_eq!(m[&PadButton::RightStick], PadAction::DomeCenter); // se añade el valor nuevo
+    }
+
+    #[test]
+    fn current_version_mapping_is_not_touched() {
+        let (m, migrated) = parse_mapping("version=2\nsouth=legs3\n");
+        assert!(!migrated);
+        assert_eq!(m.len(), 1); // quien quitó los clics de stick los sigue teniendo sin asignar
+    }
+
+    #[test]
+    fn default_mapping_is_a_b_y_x_and_stick_clicks() {
         let m = default_mapping();
+        assert_eq!(m[&PadButton::LeftStick], PadAction::AimToggle);
+        assert_eq!(m[&PadButton::RightStick], PadAction::DomeCenter);
         assert_eq!(m[&PadButton::South], PadAction::Legs3);
         assert_eq!(m[&PadButton::East], PadAction::Legs2);
         assert_eq!(m[&PadButton::North], PadAction::Waddle);

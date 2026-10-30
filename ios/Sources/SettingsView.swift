@@ -90,9 +90,12 @@ struct EnergyView: View {
 
             Section {
                 Toggle("Seguir activo con la pantalla bloqueada", isOn: $keeper.keepAlive)
+                if keeper.keepAlive {
+                    LabeledContent("Estado", value: keeper.running ? "Activo" : "Detenido")
+                }
                 Toggle("No bloquear la pantalla automáticamente", isOn: $keeper.keepScreenOn)
             } header: { Text("Segundo plano") } footer: {
-                Text("Mientras estén activos los modos automáticos, la voz o el seguimiento, la app sigue funcionando con el iPhone bloqueado (reproduce silencio para que iOS no la suspenda). Gasta más batería y el iPhone mostrará el indicador de audio.")
+                Text("Está activado por defecto. Con el iPhone bloqueado la app sigue enviando órdenes al droide (mando, modos automáticos, voz y seguimiento) porque reproduce una señal inaudible para que iOS no la suspenda. Gasta más batería y el iPhone mostrará el indicador de audio. Si el estado dice «Detenido», desactívalo y vuelve a activarlo.")
             }
         }
     }

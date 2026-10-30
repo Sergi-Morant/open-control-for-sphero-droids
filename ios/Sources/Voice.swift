@@ -3,16 +3,45 @@ import Speech
 import SwiftUI
 
 /// Gestiona la sesión de audio y permite que la app siga activa con la pantalla bloqueada.
-/// Se usa el modo de audio en segundo plano reproduciendo silencio; sin él, iOS suspende la app al bloquear.
+/// Se usa el modo de audio en segundo plano reproduciendo una señal inaudible; sin él, iOS suspende la app al bloquear
+/// y el droide deja de recibir órdenes (también las del mando).
 final class BackgroundKeeper: ObservableObject {
     static let shared = BackgroundKeeper()
+    private static let keepAliveKey = "keepAliveInBackground"
 
-    @Published var keepAlive = false { didSet { applyKeepAlive() } }
+    /// Activado por defecto: controlar el droide con el móvil bloqueado es un caso de uso habitual.
+    @Published var keepAlive: Bool {
+        didSet {
+            UserDefaults.standard.set(keepAlive, forKey: Self.keepAliveKey)
+            applyKeepAlive()
+        }
+    }
     @Published var keepScreenOn = false { didSet { UIApplication.shared.isIdleTimerDisabled = keepScreenOn } }
+    /// True si el motor de audio que mantiene viva la app está funcionando.
+    @Published private(set) var running = false
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var attached = false
+
+    private init() {
+        keepAlive = UserDefaults.standard.object(forKey: Self.keepAliveKey) as? Bool ?? true
+        let nc = NotificationCenter.default
+        // Una llamada, una alarma o un cambio de salida de audio detienen el motor: se reanuda solo.
+        nc.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] n in
+            let raw = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            if raw.flatMap(AVAudioSession.InterruptionType.init(rawValue:)) == .ended { self?.applyKeepAlive() }
+        }
+        nc.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.applyKeepAlive()
+        }
+        nc.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+            self?.applyKeepAlive()
+        }
+    }
+
+    /// Se llama al conectar un droide para arrancar el motor si corresponde.
+    func resume() { if keepAlive { applyKeepAlive() } }
 
     static func activateSession() {
         let s = AVAudioSession.sharedInstance()
@@ -21,23 +50,34 @@ final class BackgroundKeeper: ObservableObject {
     }
 
     private func applyKeepAlive() {
-        if keepAlive {
-            Self.activateSession()
-            if !attached {
-                engine.attach(player)
-                let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
-                engine.connect(player, to: engine.mainMixerNode, format: format)
-                attached = true
-            }
-            let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
-            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44100)!
-            buffer.frameLength = 44100                       // un segundo de silencio
-            player.scheduleBuffer(buffer, at: nil, options: .loops)
-            try? engine.start()
-            player.play()
-        } else {
+        guard keepAlive else {
             player.stop()
             engine.stop()
+            running = false
+            return
+        }
+        Self.activateSession()
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
+        if !attached {
+            engine.attach(player)
+            engine.connect(player, to: engine.mainMixerNode, format: format)
+            attached = true
+        }
+        // Un segundo de una señal a -80 dB (inaudible): un silencio absoluto podría tratarse como «sin audio».
+        let frames = AVAudioFrameCount(44100)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames)!
+        buffer.frameLength = frames
+        if let samples = buffer.floatChannelData?[0] {
+            for i in 0..<Int(frames) { samples[i] = 0.0001 * sin(2 * .pi * 40 * Float(i) / 44100) }
+        }
+        player.stop()
+        player.scheduleBuffer(buffer, at: nil, options: .loops)
+        do {
+            try engine.start()
+            player.play()
+            running = true
+        } catch {
+            running = false
         }
     }
 }

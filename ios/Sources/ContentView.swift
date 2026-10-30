@@ -171,6 +171,7 @@ struct DroidTabs: View {
         .onAppear {
             voice.configure(droid: droid, loop: loop, follow: follow)
             pad.start(droid: droid, loop: loop, stopAll: stopAll)
+            BackgroundKeeper.shared.resume()
         }
         .onDisappear { voice.stop(); loop.stop(); follow.stop(); pad.stop() }
     }

@@ -27,7 +27,7 @@ enum PadButton: String, CaseIterable, Identifiable {
 }
 
 enum PadAction: String, CaseIterable, Identifiable {
-    case legs3, legs2, waddle, legsStop, stopAll, setForward, randomSound, randomEmote, toggleMovie, toggleMonkeys, turbo, boost
+    case legs3, legs2, waddle, legsStop, stopAll, setForward, randomSound, randomEmote, toggleMovie, toggleMonkeys, turbo, boost, aimToggle, domeCenter
     var id: String { rawValue }
 
     var title: String {
@@ -44,24 +44,32 @@ enum PadAction: String, CaseIterable, Identifiable {
         case .toggleMonkeys: return "Haz monerías (activar/apagar)"
         case .turbo: return "Turbo (mientras se mantiene)"
         case .boost: return "Impulso (BB-8)"
+        case .aimToggle: return "Apuntar / fijar «adelante» (alternar)"
+        case .domeCenter: return "Centrar la cúpula"
         }
     }
 }
 
 /// Controles con mando:
-/// - Stick izquierdo: mueve el droide.
-/// - Stick derecho (eje X): cúpula; al soltarlo vuelve al centro.
+/// - Stick izquierdo: mueve el droide (en modo apuntado, lo orienta sin avanzar).
+/// - Stick derecho (eje X): la cúpula gira poco a poco mientras se mantiene; al soltarlo se queda donde está.
 /// - RT sube la velocidad máxima y LT la baja.
-/// - Botones: asignables; por defecto A = 3 patas, B = 2 patas, Y = contoneo, X = parar patas.
+/// - Botones: asignables; por defecto A = 3 patas, B = 2 patas, Y = contoneo, X = parar patas,
+///   clic del stick izquierdo = apuntar / fijar «adelante» y clic del derecho = centrar la cúpula.
 final class GamepadController: ObservableObject {
     @Published var connectedName: String?
     @Published var mapping: [PadButton: PadAction]
     @Published var maxSpeed = 0.6
     @Published var dome = 0.0
     @Published var turbo = false
+    /// Modo apuntado activo: el stick izquierdo orienta el droide sin moverlo.
+    @Published var aiming = false
 
     private static let defaultsKey = "padMapping"
-    private static let defaultMapping: [PadButton: PadAction] = [.a: .legs3, .b: .legs2, .y: .waddle, .x: .legsStop]
+    private static let versionKey = "padMappingVersion"
+    private static let defaultMapping: [PadButton: PadAction] = [
+        .a: .legs3, .b: .legs2, .y: .waddle, .x: .legsStop, .leftStick: .aimToggle, .rightStick: .domeCenter,
+    ]
 
     private weak var droid: Droid?
     private var loop: EmoteLoopController?
@@ -73,10 +81,12 @@ final class GamepadController: ObservableObject {
     private var lastDomeSent = Date.distantPast
     private var heading = 0
     private var driving = false
-    private var domeActive = false
+    private var domeDirty = false
 
     init() {
         mapping = Self.load()
+        // Sin esto iOS no entrega las pulsaciones del mando a una app en segundo plano (pantalla bloqueada).
+        GCController.shouldMonitorBackgroundEvents = true
         let nc = NotificationCenter.default
         nc.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] _ in self?.refreshName() }
         nc.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] _ in self?.refreshName() }
@@ -96,6 +106,7 @@ final class GamepadController: ObservableObject {
         timer?.invalidate(); timer = nil
         if driving { droid?.stop(heading: heading) }
         driving = false
+        if aiming { droid?.setAimLight(false); aiming = false }
     }
 
     private func refreshName() {
@@ -116,9 +127,19 @@ final class GamepadController: ObservableObject {
     }
 
     private static func load() -> [PadButton: PadAction] {
-        guard let raw = UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: String] else { return defaultMapping }
+        let defaults = UserDefaults.standard
+        guard let raw = defaults.dictionary(forKey: defaultsKey) as? [String: String] else {
+            defaults.set(2, forKey: versionKey)
+            return defaultMapping
+        }
         var map: [PadButton: PadAction] = [:]
         for (k, v) in raw { if let b = PadButton(rawValue: k), let a = PadAction(rawValue: v) { map[b] = a } }
+        // Versión 2: los clics de los sticks pasan a apuntar y centrar la cúpula. Solo si el usuario no los había asignado.
+        if defaults.integer(forKey: versionKey) < 2 {
+            for b in [PadButton.leftStick, .rightStick] where map[b] == nil { map[b] = defaultMapping[b] }
+            defaults.set(2, forKey: versionKey)
+            save(map)
+        }
         return map
     }
 
@@ -142,8 +163,11 @@ final class GamepadController: ObservableObject {
         (Int((atan2(x, y) * 180 / .pi).rounded()) % 360 + 360) % 360
     }
 
-    /// Posición de la cúpula según el eje X del stick derecho: -160°…180°.
-    static func domeOf(_ x: Float) -> Float { x >= 0 ? x * 180 : x * 160 }
+    /// Nueva posición de la cúpula tras mantener el stick `x` durante `dt` segundos (-160°…180°).
+    /// La curva cuadrática da precisión cerca del centro; a tope barre unos 120°/s.
+    static func domeStep(_ current: Double, _ x: Float, _ dt: Double) -> Double {
+        min(180, max(-160, current + Double(x * abs(x)) * 120 * dt))
+    }
 
     private func pressedButtons(_ gp: GCExtendedGamepad) -> Set<PadButton> {
         var s = Set<PadButton>()
@@ -170,17 +194,28 @@ final class GamepadController: ObservableObject {
         lastTick = now
 
         // Gatillos: RT sube y LT baja la velocidad máxima.
-        maxSpeed = min(1, max(0.15, maxSpeed + Double(gp.rightTrigger.value - gp.leftTrigger.value) * 0.5 * dt))
+        // Solo se publica si cambia: reasignar el mismo valor redibuja la pantalla y cierra los menús abiertos.
+        let trigger = Double(gp.rightTrigger.value - gp.leftTrigger.value)
+        if trigger != 0 {
+            let v = min(1, max(0.15, maxSpeed + trigger * 0.5 * dt))
+            if v != maxSpeed { maxSpeed = v }
+        }
 
         let current = pressedButtons(gp)
         let newly = current.subtracting(held)
         held = current
-        turbo = current.contains { mapping[$0] == .turbo }
+        let turboNow = current.contains { mapping[$0] == .turbo }
+        if turboNow != turbo { turbo = turboNow }
 
-        // Stick izquierdo: mueve el droide.
+        // Stick izquierdo: mueve el droide; en modo apuntado lo orienta sin avanzar.
         let (lx, ly) = Self.deadzone(gp.leftThumbstick.xAxis.value, gp.leftThumbstick.yAxis.value)
         let mag = hypot(lx, ly)
-        if mag > 0 {
+        if aiming {
+            if mag > 0 {
+                heading = Self.headingOf(lx, ly)
+                if now.timeIntervalSince(lastDrive) >= 0.1 { lastDrive = now; d.aim(heading: heading) }
+            }
+        } else if mag > 0 {
             heading = Self.headingOf(lx, ly)
             driving = true
             if now.timeIntervalSince(lastDrive) >= 0.1 {
@@ -192,22 +227,36 @@ final class GamepadController: ObservableObject {
             d.stop(heading: heading)
         }
 
-        // Stick derecho (eje X): cúpula.
+        // Stick derecho (eje X): la cúpula gira poco a poco y se queda donde se suelta.
         if d.kind.hasDome {
             let (rx, _) = Self.deadzone(gp.rightThumbstick.xAxis.value, 0)
-            let moving = rx != 0
-            if moving || domeActive {
-                let target = moving ? Double(Self.domeOf(rx)) : 0
-                if abs(target - dome) >= 2, now.timeIntervalSince(lastDomeSent) >= 0.1 {
-                    lastDomeSent = now
-                    dome = target
-                    d.setDome(Float(target))
-                }
-                domeActive = moving || abs(target - dome) >= 2
+            if rx != 0 {
+                let target = Self.domeStep(dome, rx, dt)
+                if target != dome { dome = target; domeDirty = true }
+            }
+            if domeDirty, now.timeIntervalSince(lastDomeSent) >= 0.1 {
+                lastDomeSent = now
+                domeDirty = false
+                d.setDome(Float(dome))
             }
         }
 
         for b in newly { if let a = mapping[b] { run(a, on: d) } }
+    }
+
+    /// Primera pulsación: modo apuntado (luz de apuntado y el stick orienta el droide).
+    /// Segunda: la orientación actual se fija como «adelante».
+    private func toggleAim(on d: Droid) {
+        if aiming {
+            d.setForward()
+            d.setAimLight(false)
+            aiming = false
+            heading = 0
+        } else {
+            if driving { d.stop(heading: heading); driving = false }
+            aiming = true
+            d.setAimLight(true)
+        }
     }
 
     private func run(_ a: PadAction, on d: Droid) {
@@ -227,6 +276,11 @@ final class GamepadController: ObservableObject {
         case .toggleMonkeys: toggle(.emotions, on: d)
         case .boost: d.boostV1(heading: heading)
         case .turbo: break   // se aplica mientras se mantiene pulsado
+        case .aimToggle: toggleAim(on: d)
+        case .domeCenter:
+            dome = 0
+            domeDirty = false
+            d.setDome(0)
         }
     }
 
@@ -251,8 +305,12 @@ struct GamepadView: View {
             }
             Section("Controles fijos") {
                 Text("Stick izquierdo: mueve el droide.")
-                Text("Stick derecho (eje X): gira la cúpula; al soltarlo vuelve al centro.")
+                Text("Stick derecho (eje X): la cúpula gira poco a poco mientras lo mantienes y se queda donde la sueltas. Clic del stick derecho: la centra.")
                 Text("RT: sube la velocidad máxima · LT: la baja. Ahora: \(Int(pad.maxSpeed * 100)) %.")
+                Text("Clic del stick izquierdo: modo apuntado (el stick orienta el droide sin moverlo); púlsalo otra vez para fijar esa orientación como «adelante».")
+                if pad.aiming {
+                    Label("Modo apuntado activo", systemImage: "scope").foregroundStyle(.orange)
+                }
                 Text("En PlayStation: Cruz = A, Círculo = B, Cuadrado = X, Triángulo = Y, R2/L2 = RT/LT.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
@@ -262,8 +320,9 @@ struct GamepadView: View {
                         Text("Sin asignar").tag(PadAction?.none)
                         ForEach(PadAction.allCases) { Text($0.title).tag(PadAction?.some($0)) }
                     }
+                    .pickerStyle(.navigationLink)
                 }
-                Button("Restablecer (A = 3 patas, B = 2 patas, Y = contoneo, X = parar)", action: pad.resetMapping)
+                Button("Restablecer (A = 3 patas, B = 2 patas, Y = contoneo, X = parar, clics de stick = apuntar y centrar)", action: pad.resetMapping)
             }
         }
     }

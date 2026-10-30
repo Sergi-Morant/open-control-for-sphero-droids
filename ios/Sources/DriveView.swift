@@ -15,6 +15,10 @@ struct DriveView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
+                if pad.aiming {
+                    Label("Modo apuntado (mando): orienta el droide con el stick izquierdo y vuelve a pulsarlo para fijar «adelante»", systemImage: "scope")
+                        .font(.footnote).foregroundStyle(.orange)
+                }
                 if droid.kind.hasLegs {
                     Picker("Patas", selection: Binding<Int>(get: { -1 }, set: { v in
                         if let a = LegAction(rawValue: UInt8(v)) { droid.legAction(a) }

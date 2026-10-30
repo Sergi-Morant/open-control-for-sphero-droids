@@ -79,7 +79,8 @@ struct DroidUi {
     driving: bool,
     last_drive: Instant,
     pad_driving: bool,
-    pad_dome_active: bool,
+    pad_dome_dirty: bool,
+    pad_aiming: bool,
     last_dome_sent: Instant,
     // resto de pestañas
     volume: f32,
@@ -108,7 +109,8 @@ impl DroidUi {
             driving: false,
             last_drive: now,
             pad_driving: false,
-            pad_dome_active: false,
+            pad_dome_dirty: false,
+            pad_aiming: false,
             last_dome_sent: now,
             volume: 150.0,
             search: String::new(),
@@ -365,10 +367,19 @@ fn apply_pad(e: &mut Entry, pad: &Pad, f: &Frame, dt: f32, now: Instant) {
     e.ui.max_speed = (e.ui.max_speed + (f.rt - f.lt) * 0.5 * dt).clamp(0.15, 1.0);
     e.ui.turbo = f.held.iter().any(|b| pad.mapping.get(b) == Some(&PadAction::Turbo));
 
-    // Stick izquierdo: mueve el droide.
+    // Stick izquierdo: mueve el droide; en modo apuntado lo orienta sin avanzar.
     let (lx, ly) = f.left;
     let mag = lx.hypot(ly);
-    if mag > 0.0 {
+    if e.ui.pad_aiming {
+        if mag > 0.0 {
+            let heading = gamepad::heading_of(lx, ly);
+            e.ui.heading = heading as f32;
+            if now.duration_since(e.ui.last_drive) >= Duration::from_millis(100) {
+                e.ui.last_drive = now;
+                e.droid.aim(heading, now);
+            }
+        }
+    } else if mag > 0.0 {
         let cap = if e.ui.turbo { 1.0 } else { e.ui.max_speed };
         let speed = (mag * 255.0 * cap) as i32;
         let heading = gamepad::heading_of(lx, ly);
@@ -383,17 +394,19 @@ fn apply_pad(e: &mut Entry, pad: &Pad, f: &Frame, dt: f32, now: Instant) {
         e.droid.stop(e.ui.heading as i32, now);
     }
 
-    // Stick derecho (eje X): cúpula. Al soltarlo vuelve al centro.
+    // Stick derecho (eje X): la cúpula gira poco a poco y se queda donde se suelta.
     if e.droid.kind.has_dome() {
-        let moving = f.right_x != 0.0;
-        if moving || e.ui.pad_dome_active {
-            let target = if moving { gamepad::dome_of(f.right_x) } else { 0.0 };
-            if (target - e.ui.dome).abs() >= 2.0 && now.duration_since(e.ui.last_dome_sent) >= Duration::from_millis(100) {
-                e.ui.last_dome_sent = now;
+        if f.right_x != 0.0 {
+            let target = gamepad::dome_step(e.ui.dome, f.right_x, dt);
+            if target != e.ui.dome {
                 e.ui.dome = target;
-                e.droid.set_dome(target);
+                e.ui.pad_dome_dirty = true;
             }
-            e.ui.pad_dome_active = moving || (target - e.ui.dome).abs() >= 2.0;
+        }
+        if e.ui.pad_dome_dirty && now.duration_since(e.ui.last_dome_sent) >= Duration::from_millis(100) {
+            e.ui.last_dome_sent = now;
+            e.ui.pad_dome_dirty = false;
+            e.droid.set_dome(e.ui.dome);
         }
     }
 
@@ -428,6 +441,30 @@ fn run_pad_action(e: &mut Entry, a: PadAction, now: Instant) {
         PadAction::ToggleMonkeyBusiness => toggle_loop(e, LoopMode::Emotions, now),
         PadAction::Boost => e.droid.boost_v1(e.ui.heading as i32),
         PadAction::Turbo => {} // se aplica mientras se mantiene pulsado
+        PadAction::AimToggle => toggle_aim(e, now),
+        PadAction::DomeCenter => {
+            e.ui.dome = 0.0;
+            e.ui.pad_dome_dirty = false;
+            e.droid.set_dome(0.0);
+        }
+    }
+}
+
+/// Primera pulsación: modo apuntado (luz de apuntado y el stick orienta el droide).
+/// Segunda: la orientación actual se fija como «adelante».
+fn toggle_aim(e: &mut Entry, now: Instant) {
+    if e.ui.pad_aiming {
+        e.droid.set_forward();
+        e.droid.set_aim_light(false);
+        e.ui.pad_aiming = false;
+        e.ui.heading = 0.0;
+    } else {
+        if e.ui.pad_driving {
+            e.ui.pad_driving = false;
+            e.droid.stop(e.ui.heading as i32, now);
+        }
+        e.ui.pad_aiming = true;
+        e.droid.set_aim_light(true);
     }
 }
 
@@ -451,7 +488,8 @@ fn gamepad_tab(ui: &mut egui::Ui, pad: &mut Pad, connected: bool) {
     ui.group(|ui| {
         ui.strong("Controles fijos");
         ui.label("Stick izquierdo: mueve el droide.");
-        ui.label("Stick derecho (eje X): gira la cúpula; al soltarlo vuelve al centro.");
+        ui.label("Stick derecho (eje X): la cúpula gira poco a poco mientras lo mantienes y se queda donde la sueltas. Clic del stick derecho: la centra.");
+        ui.label("Clic del stick izquierdo: modo apuntado (el stick orienta el droide sin moverlo); púlsalo otra vez para fijar esa orientación como «adelante».");
         ui.label("RT: sube la velocidad máxima · LT: la baja.");
         ui.label("En PlayStation: Cruz = A, Círculo = B, Cuadrado = X, Triángulo = Y, R2/L2 = RT/LT.");
     });
@@ -481,7 +519,7 @@ fn gamepad_tab(ui: &mut egui::Ui, pad: &mut Pad, connected: bool) {
         pad.set(b, a);
     }
     ui.add_space(6.0);
-    if ui.button("Restablecer valores (A = 3 patas, B = 2 patas, Y = contoneo, X = parar)").clicked() {
+    if ui.button("Restablecer valores (A = 3 patas, B = 2 patas, Y = contoneo, X = parar, clics de stick = apuntar y centrar)").clicked() {
         pad.reset();
     }
 }
@@ -658,6 +696,9 @@ fn drive_tab(ui: &mut egui::Ui, e: &mut Entry, now: Instant, pad_connected: bool
     });
 
     ui.add_space(8.0);
+    if e.ui.pad_aiming {
+        ui.colored_label(Color32::from_rgb(230, 170, 60), "Modo apuntado (mando): orienta el droide con el stick izquierdo y vuelve a pulsarlo para fijar «adelante».");
+    }
     ui.label(format!("Rumbo: {}°", e.ui.heading as i32));
     if ui.checkbox(&mut e.ui.stabilize, "Estabilización").changed() {
         e.droid.set_stabilization(e.ui.stabilize);
