@@ -89,6 +89,16 @@ cargo run --release
 | Linux x86_64 | `open-control-for-sphero-droids-linux-x86_64.tar.gz` | Necesita BlueZ (`bluetoothd` activo) |
 | Windows x86_64 | `open-control-for-sphero-droids-windows-x86_64.zip` | Windows 10 o superior con Bluetooth LE |
 
+### Steam Deck
+
+En modo escritorio, abre una terminal (Konsole) y ejecuta:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Sergi-Morant/open-control-for-sphero-droids/main/desktop/packaging/steamdeck/install.sh | bash
+```
+
+No necesita `sudo` ni modifica el sistema. Instala en tu carpeta personal y crea un acceso en el menú. Para que los controles de la Deck lleguen como mando, añade la app a Steam como «juego que no es de Steam». Para quitarla: `install.sh --uninstall`. **Sin probar** con droide real.
+
 Para compilar en Linux hacen falta `libdbus-1-dev`, `libudev-dev`, `pkg-config` y las librerías de X11/Wayland (ver `.github/workflows/desktop.yml`).
 
 Despierta al droide sacándolo del cargador y pulsa **Buscar droides**.
