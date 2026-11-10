@@ -174,7 +174,7 @@ async fn session(
     } else {
         WriteType::WithResponse
     };
-    let mut rssi_timer = tokio::time::interval(Duration::from_millis(700));
+    let mut rssi_timer = tokio::time::interval(Duration::from_millis(350));
 
     loop {
         tokio::select! {

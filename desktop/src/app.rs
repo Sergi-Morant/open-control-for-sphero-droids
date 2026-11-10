@@ -1,16 +1,17 @@
-//! Interfaz egui: una ventana con una pestaña por función, igual que la app de iOS.
+//! Interfaz egui: barra lateral con una pantalla por función, droides arriba y parada siempre a mano abajo.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
-use egui::{Color32, RichText, Sense, Stroke, Vec2};
+use egui::{Color32, Margin, RichText, Sense, Stroke, Vec2};
 
 use crate::backend::{Backend, Event};
-use crate::controllers::{Follow, DrawDrive, EmoteLoop, LoopMode, Patrol};
+use crate::controllers::{DrawDrive, EmoteLoop, Follow, LoopMode, Patrol, FOLLOW_HISTORY};
 use crate::droid::{Droid, Interactions, LegAction, Link};
 use crate::gamepad::{self, Frame, Pad, PadAction, PadButton};
 use crate::kind::{Kind, LightStyle, Sound};
+use crate::theme;
 use crate::translate;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -25,26 +26,27 @@ enum Tab {
     Draw,
     Lights,
     Gamepad,
-    Energy,
     Settings,
     Log,
 }
 
-const TABS: [(Tab, &str); 13] = [
-    (Tab::Connect, "Conectar"),
-    (Tab::Drive, "Conducir"),
-    (Tab::Emotes, "Emociones"),
-    (Tab::Auto, "Automático"),
-    (Tab::Sounds, "Sonidos"),
-    (Tab::Follow, "Seguir"),
-    (Tab::Patrol, "Patrulla"),
-    (Tab::Draw, "Dibujar"),
-    (Tab::Lights, "Luces"),
-    (Tab::Gamepad, "Mando"),
-    (Tab::Energy, "Energía"),
-    (Tab::Settings, "Ajustes"),
-    (Tab::Log, "Log"),
+/// Navegación de la barra lateral, por grupos.
+const NAV: [(&str, &[(Tab, &str)]); 3] = [
+    ("Droide", &[(Tab::Drive, "Conducir"), (Tab::Emotes, "Emociones"), (Tab::Sounds, "Sonidos"), (Tab::Lights, "Luces")]),
+    ("Automático", &[(Tab::Auto, "Modos automáticos"), (Tab::Follow, "Seguir"), (Tab::Patrol, "Patrulla"), (Tab::Draw, "Dibujar recorrido")]),
+    ("Sistema", &[(Tab::Connect, "Droides"), (Tab::Gamepad, "Mando"), (Tab::Settings, "Ajustes"), (Tab::Log, "Registro")]),
 ];
+
+impl Tab {
+    fn title(self) -> &'static str {
+        NAV.iter().flat_map(|(_, items)| items.iter()).find(|(t, _)| *t == self).map_or("", |(_, name)| name)
+    }
+
+    /// Pantallas que tienen sentido sin ningún droide conectado.
+    fn works_without_droid(self) -> bool {
+        matches!(self, Tab::Connect | Tab::Gamepad)
+    }
+}
 
 /// Cómo se conduce cuando no hay mando conectado.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -158,6 +160,7 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        theme::apply(&cc.egui_ctx);
         let (tx, rx) = channel();
         App {
             backend: Backend::new(cc.egui_ctx.clone(), tx),
@@ -207,6 +210,7 @@ impl App {
             Event::Rssi(id, r) => {
                 if let Some(e) = self.entry_mut(&id) {
                     e.droid.rssi = Some(r);
+                    e.droid.rssi_at = Some(now);
                 }
             }
             Event::Failed(id, msg) => {
@@ -254,93 +258,135 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let now = Instant::now();
         let App { backend, entries, active, found, scanning, bt_error, tab, pad, pad_frame_connected, input_mode, .. } = self;
-        if entries.is_empty() {
+        if entries.is_empty() && !tab.works_without_droid() {
             *tab = Tab::Connect;
         }
         *active = (*active).min(entries.len().saturating_sub(1));
 
-        egui::Panel::top("droids").show(ui, |ui| {
+        // Esc para todo, salvo que se esté escribiendo en un campo de texto.
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) && !ui.ctx().egui_wants_keyboard_input() {
+            if let Some(e) = entries.get_mut(*active) {
+                e.stop_all(now);
+            }
+        }
+
+        // Barra lateral: navegación agrupada.
+        let side = egui::Frame::new().fill(theme::PANEL).inner_margin(Margin::same(12));
+        egui::Panel::left("nav").exact_size(200.0).resizable(false).show_separator_line(false).frame(side).show(ui, |ui| {
+            ui.label(RichText::new("Open control").strong().size(19.0));
+            ui.label(RichText::new("for Sphero Droids").color(theme::MUTED).size(12.5));
+            ui.add_space(12.0);
+            for (group, items) in NAV {
+                theme::section(ui, group);
+                for &(t, name) in items {
+                    let enabled = !entries.is_empty() || t.works_without_droid();
+                    let button = egui::Button::selectable(*tab == t, name).min_size(Vec2::new(ui.available_width(), 36.0));
+                    if ui.add_enabled(enabled, button).clicked() {
+                        *tab = t;
+                    }
+                }
+                ui.add_space(10.0);
+            }
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                if *pad_frame_connected {
+                    theme::pill(ui, theme::GREEN, "Mando conectado");
+                } else {
+                    theme::pill(ui, theme::BORDER, "Sin mando");
+                }
+            });
+        });
+
+        // Arriba: los droides conectados.
+        let top = egui::Frame::new().fill(theme::BG).inner_margin(Margin::symmetric(20, 10));
+        egui::Panel::top("droids").show_separator_line(false).frame(top).show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 for (i, e) in entries.iter().enumerate() {
-                    let color = match e.droid.link {
-                        Link::Ready => Color32::from_rgb(90, 200, 120),
-                        Link::Connecting => Color32::from_rgb(230, 170, 60),
-                        Link::Disconnected => Color32::GRAY,
-                    };
-                    let text = RichText::new(format!("{} · {}", e.droid.kind.title(), e.droid.battery.text())).color(color);
-                    if ui.selectable_label(i == *active, text).clicked() {
+                    let color = link_color(e.droid.link);
+                    let text = format!("      {} · {}", e.droid.kind.title(), e.droid.battery.text());
+                    let r = ui.add(egui::Button::selectable(i == *active, text)).on_hover_text(format!("{}: {}", e.droid.name, e.droid.status));
+                    ui.painter().circle_filled(r.rect.left_center() + Vec2::new(16.0, 0.0), 5.0, color);
+                    if r.clicked() {
                         *active = i;
                     }
                 }
-                if ui.button("+ Droides").clicked() {
+                if entries.is_empty() {
+                    ui.label(RichText::new("Ningún droide conectado").color(theme::MUTED));
+                } else if ui.button("+ Añadir droide").clicked() {
                     *tab = Tab::Connect;
                 }
-                if *pad_frame_connected {
-                    ui.label(RichText::new("Mando conectado").color(Color32::from_rgb(90, 200, 120)));
-                }
             });
         });
 
-        egui::Panel::bottom("bottom").show(ui, |ui| {
+        // Abajo: parada de emergencia, lo que está en marcha y el estado.
+        let bottom = egui::Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(20, 10));
+        egui::Panel::bottom("bottom").show_separator_line(false).frame(bottom).show(ui, |ui| {
             ui.horizontal(|ui| {
-                if let Some(e) = entries.get_mut(*active) {
-                    let stop = egui::Button::new(RichText::new("Parar todo").strong()).fill(Color32::from_rgb(170, 50, 50));
-                    if ui.add(stop).clicked() {
-                        e.stop_all(now);
-                    }
-                    if e.ui.emote_loop.running == Some(LoopMode::Wwm) && ui.button("Viendo una película  ✕").clicked() {
-                        e.ui.emote_loop.stop();
-                    }
-                    if e.ui.emote_loop.running == Some(LoopMode::Emotions) && ui.button("Haciendo monerías  ✕").clicked() {
-                        e.ui.emote_loop.stop();
-                    }
-                    if e.ui.follow.running && ui.button("Siguiéndote  ✕").clicked() {
-                        e.ui.follow.stop(&mut e.droid, now);
-                    }
-                    if e.droid.chatter && ui.button("Charla aleatoria  ✕").clicked() {
-                        e.droid.set_chatter(false, now);
-                    }
-                    ui.label(format!("{}: {}", e.droid.name, e.droid.status));
+                let Some(e) = entries.get_mut(*active) else {
+                    ui.label(RichText::new("Busca y conecta un droide para empezar.").color(theme::MUTED));
+                    return;
+                };
+                if ui.add(theme::danger("PARAR TODO").min_size(Vec2::new(150.0, 42.0))).on_hover_text("Detiene movimiento, modos automáticos, animaciones y sonido (tecla Esc)").clicked() {
+                    e.stop_all(now);
                 }
+                if e.ui.emote_loop.running == Some(LoopMode::Wwm) && ui.button("Viendo una película  ✕").clicked() {
+                    e.ui.emote_loop.stop();
+                }
+                if e.ui.emote_loop.running == Some(LoopMode::Emotions) && ui.button("Haciendo monerías  ✕").clicked() {
+                    e.ui.emote_loop.stop();
+                }
+                if e.ui.follow.running && ui.button("Siguiéndote  ✕").clicked() {
+                    e.ui.follow.stop(&mut e.droid, now);
+                }
+                if e.ui.patrol.running && ui.button("Patrullando  ✕").clicked() {
+                    e.ui.patrol.stop(&mut e.droid, now);
+                }
+                if e.ui.draw.running && ui.button("Recorrido  ✕").clicked() {
+                    e.ui.draw.abort(&mut e.droid, now);
+                }
+                if e.droid.chatter && ui.button("Charla aleatoria  ✕").clicked() {
+                    e.droid.set_chatter(false, now);
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(RichText::new(format!("{}: {}", e.droid.name, e.droid.status)).color(theme::MUTED));
+                });
             });
         });
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for (t, name) in TABS {
-                    if entries.is_empty() && t != Tab::Connect {
-                        continue;
-                    }
-                    ui.selectable_value(tab, t, name);
+        let center = egui::Frame::new().fill(theme::BG).inner_margin(Margin::symmetric(20, 8));
+        egui::CentralPanel::default().frame(center).show(ui, |ui| {
+            ui.heading(tab.title());
+            ui.add_space(4.0);
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                match *tab {
+                    Tab::Connect => return connect_tab(ui, backend, entries, active, tab, found, *scanning, bt_error.as_deref()),
+                    Tab::Gamepad => return gamepad_tab(ui, pad, *pad_frame_connected),
+                    _ => {}
                 }
-            });
-            ui.separator();
-
-            if *tab == Tab::Connect {
-                connect_tab(ui, backend, entries, active, found, *scanning, bt_error.as_deref());
-                return;
-            }
-            if *tab == Tab::Gamepad {
-                gamepad_tab(ui, pad, *pad_frame_connected);
-                return;
-            }
-            let Some(e) = entries.get_mut(*active) else { return };
-            if !e.droid.is_ready() {
-                ui.colored_label(Color32::from_rgb(230, 170, 60), format!("{}: {}", e.droid.name, e.droid.status));
-            }
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match *tab {
-                Tab::Drive => drive_tab(ui, e, now, *pad_frame_connected, input_mode),
-                Tab::Emotes => emotes_tab(ui, e, now),
-                Tab::Auto => auto_tab(ui, e, now),
-                Tab::Sounds => sounds_tab(ui, e, now),
-                Tab::Follow => follow_tab(ui, e, now),
-                Tab::Patrol => patrol_tab(ui, e, now),
-                Tab::Draw => draw_tab(ui, e, now),
-                Tab::Lights => lights_tab(ui, e),
-                Tab::Energy => energy_tab(ui, e),
-                Tab::Settings => settings_tab(ui, e),
-                Tab::Log => log_tab(ui, e),
-                Tab::Connect | Tab::Gamepad => {}
+                let Some(e) = entries.get_mut(*active) else { return };
+                if !e.droid.is_ready() {
+                    theme::card(ui, "", |ui| {
+                        ui.horizontal(|ui| {
+                            if e.droid.link == Link::Connecting {
+                                ui.spinner();
+                            }
+                            ui.colored_label(theme::AMBER, format!("{}: {}", e.droid.name, e.droid.status));
+                        });
+                    });
+                }
+                match *tab {
+                    Tab::Drive => drive_tab(ui, e, now, *pad_frame_connected, input_mode),
+                    Tab::Emotes => emotes_tab(ui, e, now),
+                    Tab::Auto => auto_tab(ui, e, now),
+                    Tab::Sounds => sounds_tab(ui, e, now),
+                    Tab::Follow => follow_tab(ui, e, now),
+                    Tab::Patrol => patrol_tab(ui, e, now),
+                    Tab::Draw => draw_tab(ui, e, now),
+                    Tab::Lights => lights_tab(ui, e),
+                    Tab::Settings => settings_tab(ui, e),
+                    Tab::Log => log_tab(ui, e),
+                    Tab::Connect | Tab::Gamepad => {}
+                }
+                ui.add_space(8.0);
             });
         });
 
@@ -354,6 +400,26 @@ impl eframe::App for App {
             }
         }
     }
+}
+
+fn link_color(link: Link) -> Color32 {
+    match link {
+        Link::Ready => theme::GREEN,
+        Link::Connecting => theme::AMBER,
+        Link::Disconnected => theme::MUTED,
+    }
+}
+
+/// Fila con contenido a la izquierda y acciones pegadas a la derecha.
+fn row(ui: &mut egui::Ui, left: impl FnOnce(&mut egui::Ui), right: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        left(ui);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
+    });
+}
+
+fn muted(text: impl Into<String>) -> RichText {
+    RichText::new(text).color(theme::MUTED)
 }
 
 // ---------------------------------------------------------------------------- mando
@@ -477,135 +543,182 @@ fn toggle_loop(e: &mut Entry, mode: LoopMode, now: Instant) {
 }
 
 fn gamepad_tab(ui: &mut egui::Ui, pad: &mut Pad, connected: bool) {
-    if !pad.available() {
-        ui.colored_label(Color32::from_rgb(230, 170, 60), "No se pudo iniciar la lectura de mandos en este sistema.");
-    }
-    match (&pad.name, connected) {
-        (Some(n), true) => ui.colored_label(Color32::from_rgb(90, 200, 120), format!("Mando conectado: {n}")),
-        _ => ui.label("Conecta un mando (Xbox, PlayStation…) por USB o Bluetooth."),
-    };
-    ui.add_space(6.0);
-    ui.group(|ui| {
-        ui.strong("Controles fijos");
-        ui.label("Stick izquierdo: mueve el droide.");
-        ui.label("Stick derecho (eje X): la cúpula gira poco a poco mientras lo mantienes y se queda donde la sueltas. Clic del stick derecho: la centra.");
-        ui.label("Clic del stick izquierdo: modo apuntado (el stick orienta el droide sin moverlo); púlsalo otra vez para fijar esa orientación como «adelante».");
-        ui.label("RT: sube la velocidad máxima · LT: la baja.");
-        ui.label("En PlayStation: Cruz = A, Círculo = B, Cuadrado = X, Triángulo = Y, R2/L2 = RT/LT.");
+    theme::card(ui, "Estado", |ui| {
+        if !pad.available() {
+            ui.colored_label(theme::AMBER, "No se pudo iniciar la lectura de mandos en este sistema.");
+        }
+        match (&pad.name, connected) {
+            (Some(n), true) => theme::pill(ui, theme::GREEN, &format!("Conectado: {n}")),
+            _ => {
+                ui.label("Conecta un mando (Xbox, PlayStation…) por USB o Bluetooth.");
+                ui.label(muted("En Steam Deck: añade la app a Steam como juego que no es de Steam para que los controles lleguen como mando."));
+            }
+        }
     });
-    ui.add_space(6.0);
-    ui.strong("Botones");
-    let mut change: Option<(PadButton, Option<PadAction>)> = None;
-    for b in PadButton::ALL {
-        let current = pad.mapping.get(&b).copied();
-        ui.horizontal(|ui| {
-            ui.label(format!("{:<28}", b.title()));
-            egui::ComboBox::from_id_salt(b.title())
-                .selected_text(current.map_or("Sin asignar", |a| a.title()))
-                .width(320.0)
-                .show_ui(ui, |ui| {
-                    if ui.selectable_label(current.is_none(), "Sin asignar").clicked() {
-                        change = Some((b, None));
-                    }
-                    for a in PadAction::ALL {
-                        if ui.selectable_label(current == Some(a), a.title()).clicked() {
-                            change = Some((b, Some(a)));
-                        }
-                    }
-                });
+    ui.columns(2, |cols| {
+        theme::card(&mut cols[0], "Controles fijos", |ui| {
+            egui::Grid::new("pad_fixed").num_columns(2).spacing([14.0, 8.0]).show(ui, |ui| {
+                for (k, v) in [
+                    ("Stick izquierdo", "Mueve el droide"),
+                    ("Stick derecho", "Gira la cúpula poco a poco"),
+                    ("Clic stick derecho", "Centra la cúpula"),
+                    ("Clic stick izquierdo", "Apuntar; otra vez para fijar «adelante»"),
+                    ("RT / LT", "Sube / baja la velocidad máxima"),
+                ] {
+                    ui.strong(k);
+                    ui.label(v);
+                    ui.end_row();
+                }
+            });
+            ui.label(muted("PlayStation: Cruz = A, Círculo = B, Cuadrado = X, Triángulo = Y, R2/L2 = RT/LT."));
         });
-    }
-    if let Some((b, a)) = change {
-        pad.set(b, a);
-    }
-    ui.add_space(6.0);
-    if ui.button("Restablecer valores (A = 3 patas, B = 2 patas, Y = contoneo, X = parar, clics de stick = apuntar y centrar)").clicked() {
-        pad.reset();
-    }
+        theme::card(&mut cols[1], "Botones", |ui| {
+            let mut change: Option<(PadButton, Option<PadAction>)> = None;
+            egui::Grid::new("pad_map").num_columns(2).spacing([14.0, 8.0]).show(ui, |ui| {
+                for b in PadButton::ALL {
+                    let current = pad.mapping.get(&b).copied();
+                    ui.label(b.title());
+                    egui::ComboBox::from_id_salt(b.title()).selected_text(current.map_or("Sin asignar", |a| a.title())).width(200.0).truncate().show_ui(ui, |ui| {
+                        if ui.selectable_label(current.is_none(), "Sin asignar").clicked() {
+                            change = Some((b, None));
+                        }
+                        for a in PadAction::ALL {
+                            if ui.selectable_label(current == Some(a), a.title()).clicked() {
+                                change = Some((b, Some(a)));
+                            }
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
+            if let Some((b, a)) = change {
+                pad.set(b, a);
+            }
+            ui.add_space(4.0);
+            if ui.button("Restablecer").on_hover_text("A = 3 patas, B = 2 patas, Y = contoneo, X = parar, clics de stick = apuntar y centrar").clicked() {
+                pad.reset();
+            }
+        });
+    });
 }
 
 // ---------------------------------------------------------------------------- conexión
 
+#[allow(clippy::too_many_arguments)]
 fn connect_tab(
     ui: &mut egui::Ui,
     backend: &Backend,
     entries: &mut Vec<Entry>,
     active: &mut usize,
+    tab: &mut Tab,
     found: &[Found],
     scanning: bool,
     bt_error: Option<&str>,
 ) {
     if let Some(err) = bt_error {
-        ui.colored_label(Color32::from_rgb(220, 80, 80), err);
+        theme::card(ui, "Bluetooth", |ui| {
+            ui.colored_label(theme::RED, err);
+        });
     }
-    ui.horizontal(|ui| {
-        if ui.add_enabled(!scanning, egui::Button::new(if scanning { "Buscando…" } else { "Buscar droides" })).clicked() {
-            backend.start_scan();
-        }
-        ui.label("Busca BB-8, R2-D2, BB-9E y R2-Q5. Despierta al droide sacándolo del cargador.");
+    theme::card(ui, "", |ui| {
+        ui.horizontal(|ui| {
+            let label = if scanning { "Buscando…" } else { "Buscar droides" };
+            if ui.add_enabled(!scanning, theme::primary(label).min_size(Vec2::new(180.0, 42.0))).clicked() {
+                backend.start_scan();
+            }
+            if scanning {
+                ui.spinner();
+            }
+        });
+        ui.label(muted("Busca BB-8, R2-D2, BB-9E y R2-Q5. Despierta al droide sacándolo del cargador."));
     });
 
     if !entries.is_empty() {
-        ui.separator();
-        ui.strong("Conectados");
-        let mut remove: Option<usize> = None;
-        for (i, e) in entries.iter_mut().enumerate() {
-            ui.horizontal(|ui| {
-                ui.label(format!("{} · {} — {}", e.droid.name, e.droid.kind.title(), e.droid.status));
-                match e.droid.link {
-                    Link::Disconnected => {
-                        if ui.button("Quitar").clicked() {
-                            remove = Some(i);
-                        }
-                    }
-                    _ => {
-                        if ui.button("Desconectar").clicked() {
+        theme::card(ui, "Conectados", |ui| {
+            let mut remove: Option<usize> = None;
+            for (i, e) in entries.iter_mut().enumerate() {
+                let link = e.droid.link;
+                let text = format!("{} · {}", e.droid.name, e.droid.kind.title());
+                let status = e.droid.status.clone();
+                row(
+                    ui,
+                    |ui| {
+                        theme::dot(ui, link_color(link));
+                        ui.strong(text);
+                        ui.label(muted(status));
+                    },
+                    |ui| {
+                        if link == Link::Disconnected {
+                            if ui.button("Quitar").clicked() {
+                                remove = Some(i);
+                            }
+                        } else if ui.button("Desconectar").clicked() {
                             e.droid.disconnect();
                         }
-                    }
-                }
-            });
-        }
-        if let Some(i) = remove {
-            entries.remove(i);
-        }
-    }
-
-    ui.separator();
-    ui.strong("Encontrados");
-    if found.is_empty() {
-        ui.label("Nada todavía");
-    }
-    let mut connect: Option<(String, String, Kind)> = None;
-    for f in found {
-        ui.horizontal(|ui| {
-            ui.label(format!("{} · {}   {}", f.name, f.kind.title(), f.rssi.map_or(String::new(), |r| format!("{r} dBm"))));
-            let already = entries.iter().any(|e| e.droid.id == f.id && e.droid.link != Link::Disconnected);
-            if ui.add_enabled(!already, egui::Button::new("Conectar")).clicked() {
-                connect = Some((f.id.clone(), f.name.clone(), f.kind));
+                    },
+                );
+            }
+            if let Some(i) = remove {
+                entries.remove(i);
             }
         });
     }
+
+    let mut connect: Option<(String, String, Kind)> = None;
+    theme::card(ui, "Encontrados", |ui| {
+        if found.is_empty() {
+            ui.label(muted(if scanning { "Buscando droides cercanos…" } else { "Nada todavía. Pulsa «Buscar droides»." }));
+        }
+        for f in found {
+            let already = entries.iter().any(|e| e.droid.id == f.id && e.droid.link != Link::Disconnected);
+            row(
+                ui,
+                |ui| {
+                    theme::signal_bars(ui, f.rssi.map(f32::from));
+                    ui.strong(format!("{} · {}", f.name, f.kind.title()));
+                    if let Some(r) = f.rssi {
+                        ui.label(muted(format!("{r} dBm")));
+                    }
+                },
+                |ui| {
+                    if already {
+                        ui.label(muted("Conectado"));
+                    } else if ui.add(theme::primary("Conectar")).clicked() {
+                        connect = Some((f.id.clone(), f.name.clone(), f.kind));
+                    }
+                },
+            );
+        }
+    });
     if let Some((id, name, kind)) = connect {
         let tx = backend.connect(id.clone(), kind);
         entries.retain(|e| e.droid.id != id);
         entries.push(Entry { droid: Droid::new(id, name, kind, tx), ui: DroidUi::new() });
         *active = entries.len() - 1;
+        *tab = Tab::Drive;
     }
 }
 
 // ---------------------------------------------------------------------------- conducir
 
-fn pad_widget(ui: &mut egui::Ui) -> Option<Vec2> {
-    let size = 200.0;
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::drag());
-    let (c, r) = (rect.center(), size / 2.0);
+/// Joystick en pantalla. Muestra siempre el rumbo actual; solo responde al puntero si `interactive`.
+fn joystick(ui: &mut egui::Ui, heading: f32, interactive: bool) -> Option<Vec2> {
+    let size = 230.0;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), if interactive { Sense::drag() } else { Sense::hover() });
+    let (c, r) = (rect.center(), size / 2.0 - 4.0);
     let painter = ui.painter();
-    painter.circle_filled(c, r, Color32::from_gray(40));
-    painter.circle_stroke(c, r, Stroke::new(2.0, Color32::GRAY));
+    painter.circle_filled(c, r, ui.visuals().extreme_bg_color);
+    painter.circle_stroke(c, r, Stroke::new(2.0, theme::BORDER));
+    painter.circle_stroke(c, r * 0.5, Stroke::new(1.0, theme::BORDER));
+    painter.line_segment([c - Vec2::new(r, 0.0), c + Vec2::new(r, 0.0)], Stroke::new(1.0, theme::BORDER));
+    painter.line_segment([c - Vec2::new(0.0, r), c + Vec2::new(0.0, r)], Stroke::new(1.0, theme::BORDER));
+    // Marca del rumbo en el borde.
+    let a = heading.to_radians();
+    let dir = Vec2::new(a.sin(), -a.cos());
+    painter.line_segment([c + dir * (r - 14.0), c + dir * r], Stroke::new(4.0, theme::AMBER));
     let mut v = None;
     let mut knob = c;
-    if resp.dragged() || resp.is_pointer_button_down_on() {
+    if interactive && (resp.dragged() || resp.is_pointer_button_down_on()) {
         if let Some(pos) = resp.interact_pointer_pos() {
             let d = (pos - c) / r;
             let m = d.length();
@@ -614,125 +727,144 @@ fn pad_widget(ui: &mut egui::Ui) -> Option<Vec2> {
             knob = c + d * r;
         }
     }
-    painter.circle_filled(knob, 22.0, Color32::from_rgb(110, 170, 230));
+    let color = if !interactive { theme::WIDGET_HOVER } else if v.is_some() { theme::ACCENT } else { theme::ACCENT.gamma_multiply(0.8) };
+    painter.circle_filled(knob, 26.0, color);
+    painter.circle_stroke(knob, 26.0, Stroke::new(2.0, Color32::from_white_alpha(40)));
     v
 }
 
 fn drive_tab(ui: &mut egui::Ui, e: &mut Entry, now: Instant, pad_connected: bool, mode: &mut InputMode) {
-    if e.droid.kind.has_dome() {
-        ui.horizontal(|ui| {
-            ui.label("Patas:");
-            for a in LegAction::ALL {
-                if ui.button(a.title()).clicked() {
-                    e.droid.leg_action(a);
-                }
-            }
-        });
-    }
-
-    // Con mando conectado manda el mando; si no, el usuario elige teclado o joystick con el ratón.
-    ui.horizontal(|ui| {
-        if pad_connected {
-            ui.colored_label(Color32::from_rgb(90, 200, 120), "Mando conectado: stick izquierdo mueve el droide, derecho gira la cúpula, RT/LT cambian la velocidad.");
-        } else {
-            ui.label("Control:");
-            ui.radio_value(mode, InputMode::Mouse, "Joystick con el ratón");
-            ui.radio_value(mode, InputMode::Keyboard, "Teclado (WASD / flechas)");
-        }
-    });
+    // Con mando conectado manda el mando; si no, el usuario elige teclado o joystick en pantalla.
     let use_mouse = !pad_connected && *mode == InputMode::Mouse;
     let use_keys = !pad_connected && *mode == InputMode::Keyboard;
+    let mut stick: Option<Vec2> = None;
 
-    ui.horizontal(|ui| {
-        let pad = if use_mouse { pad_widget(ui) } else { None };
-        ui.vertical(|ui| {
-            if use_mouse {
-                ui.label("Arrastra el círculo para mover el droide.");
-            } else if use_keys {
-                ui.label("W avanza, S retrocede, A y D giran (también las flechas).");
+    ui.columns(2, |cols| {
+        theme::card(&mut cols[0], "Movimiento", |ui| {
+            if pad_connected {
+                theme::pill(ui, theme::GREEN, "Conduciendo con el mando");
+            } else {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(mode, InputMode::Mouse, "Ratón / táctil");
+                    ui.selectable_value(mode, InputMode::Keyboard, "Teclado");
+                });
             }
-            ui.checkbox(&mut e.ui.turbo, "Turbo");
-            ui.add(egui::Slider::new(&mut e.ui.max_speed, 0.15..=1.0).text("velocidad máxima"));
+            ui.vertical_centered(|ui| {
+                stick = joystick(ui, e.ui.heading, use_mouse);
+                ui.label(RichText::new(format!("Rumbo {}°", e.ui.heading as i32)).strong());
+            });
+            ui.label(muted(if pad_connected {
+                "Stick izquierdo: mover · stick derecho: cúpula · RT/LT: velocidad."
+            } else if use_mouse {
+                "Arrastra el círculo para mover el droide."
+            } else {
+                "W avanza, S retrocede, A y D giran (también las flechas)."
+            }));
+            if e.ui.pad_aiming {
+                ui.colored_label(theme::AMBER, "Modo apuntado: orienta el droide con el stick izquierdo y púlsalo otra vez para fijar «adelante».");
+            }
         });
 
-        // Entrada: círculo táctil o teclado.
-        let dt = ui.input(|i| i.stable_dt);
-        let typing = ui.ctx().egui_wants_keyboard_input();
-        let key = |k: egui::Key| use_keys && !typing && ui.input(|i| i.key_down(k));
-        let cap = if e.ui.turbo { 1.0 } else { e.ui.max_speed };
-        let mut cmd: Option<(i32, i32, bool)> = None;
-        if let Some(v) = pad.filter(|v| v.length() > 0.1) {
-            e.ui.heading = gamepad::heading_of(v.x, -v.y) as f32;
-            cmd = Some(((v.length().min(1.0) * 255.0 * cap) as i32, e.ui.heading as i32, false));
-        } else {
-            let (fwd, back) = (key(egui::Key::W) || key(egui::Key::ArrowUp), key(egui::Key::S) || key(egui::Key::ArrowDown));
-            let (left, right) = (key(egui::Key::A) || key(egui::Key::ArrowLeft), key(egui::Key::D) || key(egui::Key::ArrowRight));
-            if left {
-                e.ui.heading = (e.ui.heading - 120.0 * dt).rem_euclid(360.0);
-            }
-            if right {
-                e.ui.heading = (e.ui.heading + 120.0 * dt).rem_euclid(360.0);
-            }
-            if fwd || back {
-                cmd = Some(((255.0 * cap) as i32, e.ui.heading as i32, back));
-            } else if left || right {
-                cmd = Some((0, e.ui.heading as i32, false));
-            }
+        let ui = &mut cols[1];
+        theme::card(ui, "Velocidad", |ui| {
+            ui.add(egui::Slider::new(&mut e.ui.max_speed, 0.15..=1.0).custom_formatter(|v, _| format!("{:.0} %", v * 100.0)).text("máxima"));
+            ui.horizontal_wrapped(|ui| {
+                ui.checkbox(&mut e.ui.turbo, "Turbo");
+                if ui.checkbox(&mut e.ui.stabilize, "Estabilización").changed() {
+                    e.droid.set_stabilization(e.ui.stabilize);
+                }
+                if !e.droid.kind.uses_v2() && ui.button("Impulso").clicked() {
+                    e.droid.boost_v1(e.ui.heading as i32);
+                }
+            });
+        });
+        if e.droid.kind.has_dome() {
+            theme::card(ui, "Patas", |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for a in LegAction::ALL {
+                        if ui.button(a.title()).clicked() {
+                            e.droid.leg_action(a);
+                        }
+                    }
+                });
+            });
+            theme::card(ui, "Cúpula", |ui| {
+                ui.horizontal(|ui| {
+                    if ui.add(egui::Slider::new(&mut e.ui.dome, -160.0..=180.0).suffix("°").fixed_decimals(0)).changed() {
+                        e.droid.set_dome(e.ui.dome);
+                    }
+                    if ui.button("Centrar").clicked() {
+                        e.ui.dome = 0.0;
+                        e.droid.set_dome(0.0);
+                    }
+                });
+            });
         }
-        match cmd {
-            Some((speed, heading, reverse)) => {
-                e.ui.driving = true;
-                if now.duration_since(e.ui.last_drive) >= Duration::from_millis(100) {
-                    e.ui.last_drive = now;
-                    e.droid.drive(speed, heading, reverse, now);
+        theme::card(ui, "Apuntar", |ui| {
+            if e.ui.aiming {
+                ui.label("Gira el droide hasta que mire hacia donde quieres que sea «adelante».");
+                if ui.add(egui::Slider::new(&mut e.ui.aim_heading, 0.0..=359.0).suffix("°").fixed_decimals(0)).changed() {
+                    e.droid.aim(e.ui.aim_heading as i32, now);
+                }
+                ui.horizontal(|ui| {
+                    if ui.add(theme::primary("Fijar como adelante")).clicked() {
+                        e.droid.set_forward();
+                        e.ui.aiming = false;
+                        e.droid.set_aim_light(false);
+                    }
+                    if ui.button("Cancelar").clicked() {
+                        e.ui.aiming = false;
+                        e.droid.set_aim_light(false);
+                    }
+                });
+            } else {
+                ui.label(muted("Si «adelante» no coincide con lo que ves, reoriéntalo."));
+                if ui.button("Cambiar «adelante»").clicked() {
+                    e.ui.aiming = true;
+                    e.ui.aim_heading = 0.0;
+                    e.droid.set_aim_light(true);
                 }
             }
-            None if e.ui.driving => {
-                e.ui.driving = false;
-                e.droid.stop(e.ui.heading as i32, now);
-            }
-            None => {}
-        }
-    });
-
-    ui.add_space(8.0);
-    if e.ui.pad_aiming {
-        ui.colored_label(Color32::from_rgb(230, 170, 60), "Modo apuntado (mando): orienta el droide con el stick izquierdo y vuelve a pulsarlo para fijar «adelante».");
-    }
-    ui.label(format!("Rumbo: {}°", e.ui.heading as i32));
-    if ui.checkbox(&mut e.ui.stabilize, "Estabilización").changed() {
-        e.droid.set_stabilization(e.ui.stabilize);
-    }
-    if !e.droid.kind.uses_v2() && ui.button("Impulso (boost)").clicked() {
-        e.droid.boost_v1(e.ui.heading as i32);
-    }
-
-    ui.group(|ui| {
-        ui.strong("Apuntar");
-        if ui.checkbox(&mut e.ui.aiming, "Modo apuntado").changed() {
-            e.droid.set_aim_light(e.ui.aiming);
-            e.ui.aim_heading = 0.0;
-        }
-        if e.ui.aiming {
-            ui.label("Gira el droide hasta que mire hacia donde quieres que sea «adelante».");
-            if ui.add(egui::Slider::new(&mut e.ui.aim_heading, 0.0..=359.0)).changed() {
-                e.droid.aim(e.ui.aim_heading as i32, now);
-            }
-            if ui.button("Fijar como adelante").clicked() {
-                e.droid.set_forward();
-                e.ui.aiming = false;
-                e.droid.set_aim_light(false);
-            }
-        }
-    });
-
-    if e.droid.kind.has_dome() {
-        ui.group(|ui| {
-            ui.strong(format!("Cúpula: {}°", e.ui.dome as i32));
-            if ui.add(egui::Slider::new(&mut e.ui.dome, -160.0..=180.0)).changed() {
-                e.droid.set_dome(e.ui.dome);
-            }
         });
+    });
+
+    // Entrada: joystick en pantalla o teclado.
+    let dt = ui.input(|i| i.stable_dt);
+    let typing = ui.ctx().egui_wants_keyboard_input();
+    let key = |k: egui::Key| use_keys && !typing && ui.input(|i| i.key_down(k));
+    let cap = if e.ui.turbo { 1.0 } else { e.ui.max_speed };
+    let mut cmd: Option<(i32, i32, bool)> = None;
+    if let Some(v) = stick.filter(|v| v.length() > 0.1) {
+        e.ui.heading = gamepad::heading_of(v.x, -v.y) as f32;
+        cmd = Some(((v.length().min(1.0) * 255.0 * cap) as i32, e.ui.heading as i32, false));
+    } else {
+        let (fwd, back) = (key(egui::Key::W) || key(egui::Key::ArrowUp), key(egui::Key::S) || key(egui::Key::ArrowDown));
+        let (left, right) = (key(egui::Key::A) || key(egui::Key::ArrowLeft), key(egui::Key::D) || key(egui::Key::ArrowRight));
+        if left {
+            e.ui.heading = (e.ui.heading - 120.0 * dt).rem_euclid(360.0);
+        }
+        if right {
+            e.ui.heading = (e.ui.heading + 120.0 * dt).rem_euclid(360.0);
+        }
+        if fwd || back {
+            cmd = Some(((255.0 * cap) as i32, e.ui.heading as i32, back));
+        } else if left || right {
+            cmd = Some((0, e.ui.heading as i32, false));
+        }
+    }
+    match cmd {
+        Some((speed, heading, reverse)) => {
+            e.ui.driving = true;
+            if now.duration_since(e.ui.last_drive) >= Duration::from_millis(100) {
+                e.ui.last_drive = now;
+                e.droid.drive(speed, heading, reverse, now);
+            }
+        }
+        None if e.ui.driving => {
+            e.ui.driving = false;
+            e.droid.stop(e.ui.heading as i32, now);
+        }
+        None => {}
     }
 }
 
@@ -741,75 +873,81 @@ fn drive_tab(ui: &mut egui::Ui, e: &mut Entry, now: Instant, pad_connected: bool
 fn emotes_tab(ui: &mut egui::Ui, e: &mut Entry, now: Instant) {
     let anims = e.droid.kind.animations();
     if anims.is_empty() {
-        ui.label("Las animaciones de BB-8 son programas internos de la app original y no están incluidas.");
+        theme::card(ui, "", |ui| {
+            ui.label("Las animaciones de BB-8 son programas internos de la app original y no están incluidas.");
+        });
         return;
     }
-    if ui.button("Parar animación").clicked() {
-        e.droid.stop_animation();
-    }
     let busy = e.droid.busy(now);
-    if busy {
-        ui.label("Reproduciendo…");
-    }
+    ui.horizontal(|ui| {
+        if ui.button("Parar animación").clicked() {
+            e.droid.stop_animation();
+        }
+        if busy {
+            theme::pill(ui, theme::AMBER, "Reproduciendo…");
+        }
+    });
     let order = ["Emociones", "Reposo", "Patrulla", "Reacciones", "Reacciones (Watch With Me)", "Otras"];
     for title in order {
         let items: Vec<_> = anims.iter().filter(|a| a.category_title() == title).collect();
         if items.is_empty() {
             continue;
         }
-        egui::CollapsingHeader::new(format!("{title} ({})", items.len())).default_open(title == "Emociones").show(ui, |ui| {
-            for a in items {
-                ui.horizontal(|ui| {
-                    if ui.add_enabled(!busy, egui::Button::new(a.title())).clicked() {
+        theme::card(ui, &format!("{title} · {}", items.len()), |ui| {
+            ui.horizontal_wrapped(|ui| {
+                for a in items {
+                    if ui.add_enabled(!busy, egui::Button::new(a.title())).on_hover_text(format!("{:.1} s", a.seconds)).clicked() {
                         e.droid.play_animation(a, now);
                     }
-                    ui.weak(format!("{:.1} s", a.seconds));
-                });
-            }
+                }
+            });
         });
     }
 }
 
-/// Los dos modos automáticos. Se usan en la pestaña Automático y en Sonidos (comparten el mismo estado).
-fn auto_sections(ui: &mut egui::Ui, e: &mut Entry, now: Instant) {
+fn auto_tab(ui: &mut egui::Ui, e: &mut Entry, now: Instant) {
     let kind = e.droid.kind;
     if kind.animations().is_empty() {
-        ui.label("BB-8 no tiene animaciones en esta app.");
+        theme::card(ui, "", |ui| {
+            ui.label("BB-8 no tiene animaciones en esta app.");
+        });
         return;
     }
-    for (mode, title) in [(LoopMode::Wwm, "Vamos a ver una película"), (LoopMode::Emotions, "Haz monerías")] {
-        ui.group(|ui| {
-            let count = e.ui.emote_loop.pool(kind, mode).len();
-            ui.strong(format!("{title} · {count} emotes"));
-            let interval = if mode == LoopMode::Wwm { &mut e.ui.emote_loop.wwm_interval } else { &mut e.ui.emote_loop.emotions_interval };
-            ui.add(egui::Slider::new(interval, 3.0..=120.0).step_by(1.0).text("segundos entre emotes"));
-            if mode == LoopMode::Emotions && kind.animations().iter().any(|a| a.is_ion_blast()) {
-                ui.checkbox(&mut e.ui.emote_loop.include_ion_blast, "Incluir Ion Blast");
-            }
-            let on = e.ui.emote_loop.running == Some(mode);
-            let fill = if on { Color32::from_rgb(170, 50, 50) } else { Color32::from_rgb(50, 110, 180) };
-            if ui.add(egui::Button::new(if on { "Apagar" } else { "Iniciar" }).fill(fill)).clicked() {
-                if on {
-                    e.ui.emote_loop.stop();
-                } else {
-                    e.ui.emote_loop.start(mode, now);
+    ui.columns(2, |cols| {
+        for (col, (mode, title, hint)) in [
+            (LoopMode::Wwm, "Vamos a ver una película", "Reacciones de Watch With Me, al azar."),
+            (LoopMode::Emotions, "Haz monerías", "Emotes de Emociones, al azar."),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            theme::card(&mut cols[col], title, |ui| {
+                let count = e.ui.emote_loop.pool(kind, mode).len();
+                ui.label(muted(format!("{hint} {count} emotes.")));
+                let interval = if mode == LoopMode::Wwm { &mut e.ui.emote_loop.wwm_interval } else { &mut e.ui.emote_loop.emotions_interval };
+                ui.add(egui::Slider::new(interval, 3.0..=120.0).step_by(1.0).suffix(" s").text("entre emotes"));
+                if mode == LoopMode::Emotions && kind.animations().iter().any(|a| a.is_ion_blast()) {
+                    ui.checkbox(&mut e.ui.emote_loop.include_ion_blast, "Incluir Ion Blast");
                 }
-            }
-        });
-    }
+                let on = e.ui.emote_loop.running == Some(mode);
+                if theme::start_stop(ui, on, "Iniciar", "Apagar") {
+                    if on {
+                        e.ui.emote_loop.stop();
+                    } else {
+                        e.ui.emote_loop.start(mode, now);
+                    }
+                }
+            });
+        }
+    });
     if e.ui.emote_loop.running.is_some() {
         let last = if e.ui.emote_loop.last_played.is_empty() { "—" } else { &e.ui.emote_loop.last_played };
         ui.label(format!("Último: {last}"));
     }
-    ui.small(
-        "«Vamos a ver una película» usa los emotes de Watch With Me; «Haz monerías» usa los de Emociones. \
-         Elige un emote al azar cada cierto tiempo; si dura más que el intervalo, espera a que acabe. \
+    ui.label(muted(
+        "Elige un emote al azar cada cierto tiempo; si dura más que el intervalo, espera a que acabe. \
          Mover el droide cancela el emote en curso. Al apagar, el que está sonando termina solo.",
-    );
-}
-
-fn auto_tab(ui: &mut egui::Ui, e: &mut Entry, now: Instant) {
-    auto_sections(ui, e, now);
+    ));
 }
 
 /// Orden natural: "Hit_2" antes que "Hit_10".
@@ -821,256 +959,312 @@ fn natural_key(s: &str) -> (String, u32) {
 
 fn sounds_tab(ui: &mut egui::Ui, e: &mut Entry, now: Instant) {
     if !e.droid.kind.has_audio() {
-        ui.label("BB-8 reproducía sus sonidos desde el teléfono con el motor Wwise de la app original, que no está incluido.");
+        theme::card(ui, "", |ui| {
+            ui.label("BB-8 reproducía sus sonidos desde el teléfono con el motor Wwise de la app original, que no está incluido.");
+        });
         return;
     }
-    ui.horizontal(|ui| {
-        ui.label("Volumen");
-        let r = ui.add(egui::Slider::new(&mut e.ui.volume, 0.0..=255.0));
-        if r.drag_stopped() || (r.changed() && !r.dragged()) {
-            e.droid.set_volume(e.ui.volume as u8);
-        }
-        if ui.button("Parar audio").clicked() {
-            e.droid.stop_audio();
-        }
-    });
-    let mut chatter = e.droid.chatter;
-    if ui.checkbox(&mut chatter, "Charla aleatoria").changed() {
-        e.droid.set_chatter(chatter, now);
-    }
-    ui.separator();
-    egui::CollapsingHeader::new("Modos automáticos").default_open(true).show(ui, |ui| auto_sections(ui, e, now));
-    ui.separator();
-    if e.droid.kind == Kind::R2q5 {
-        ui.small("El R2-Q5 usa aquí la lista de sonidos del R2-D2; si alguno no suena, avísanos.");
-    }
-    ui.horizontal(|ui| {
-        ui.label("Buscar sonido:");
-        ui.text_edit_singleline(&mut e.ui.search);
-    });
-    let query = e.ui.search.to_lowercase();
-    let mut groups: BTreeMap<String, Vec<&Sound>> = BTreeMap::new();
-    for s in e.droid.kind.sounds() {
-        if query.is_empty() || s.title().to_lowercase().contains(&query) {
-            groups.entry(s.group_title()).or_default().push(s);
-        }
-    }
-    for (title, mut items) in groups {
-        items.sort_by_key(|s| natural_key(s.name));
-        egui::CollapsingHeader::new(format!("{title} ({})", items.len())).id_salt(&title).default_open(!query.is_empty()).show(ui, |ui| {
-            for s in items {
-                if ui.button(s.title()).clicked() {
-                    e.droid.play_sound(s);
-                }
+    theme::card(ui, "Audio", |ui| {
+        ui.horizontal_wrapped(|ui| {
+            let r = ui.add(egui::Slider::new(&mut e.ui.volume, 0.0..=255.0).fixed_decimals(0).text("volumen"));
+            if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                e.droid.set_volume(e.ui.volume as u8);
+            }
+            if ui.button("Parar audio").clicked() {
+                e.droid.stop_audio();
+            }
+            let mut chatter = e.droid.chatter;
+            if ui.checkbox(&mut chatter, "Charla aleatoria").changed() {
+                e.droid.set_chatter(chatter, now);
             }
         });
-    }
+    });
+    theme::card(ui, "Sonidos", |ui| {
+        ui.add(egui::TextEdit::singleline(&mut e.ui.search).hint_text("Buscar sonido…").desired_width(320.0));
+        if e.droid.kind == Kind::R2q5 {
+            ui.label(muted("El R2-Q5 usa aquí la lista de sonidos del R2-D2; puede que alguno no suene."));
+        }
+        let query = e.ui.search.to_lowercase();
+        let mut groups: BTreeMap<String, Vec<&Sound>> = BTreeMap::new();
+        for s in e.droid.kind.sounds() {
+            if query.is_empty() || s.title().to_lowercase().contains(&query) {
+                groups.entry(s.group_title()).or_default().push(s);
+            }
+        }
+        if groups.is_empty() {
+            ui.label(muted("Ningún sonido coincide."));
+        }
+        for (title, mut items) in groups {
+            items.sort_by_key(|s| natural_key(s.name));
+            egui::CollapsingHeader::new(format!("{title} ({})", items.len())).id_salt(&title).default_open(!query.is_empty()).show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for s in items {
+                        if ui.button(s.title()).clicked() {
+                            e.droid.play_sound(s);
+                        }
+                    }
+                });
+            });
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------- seguir, patrulla, dibujar
 
 fn follow_tab(ui: &mut egui::Ui, e: &mut Entry, now: Instant) {
-    ui.label(format!("Señal actual: {}", e.ui.follow.smoothed.map_or("—".into(), |s| format!("{} dBm", s as i32))));
-    ui.label(format!("Estado: {}", e.ui.follow.status));
+    let fresh = e.ui.follow.signal_fresh(&e.droid, now);
     let on = e.ui.follow.running;
-    let fill = if on { Color32::from_rgb(170, 50, 50) } else { Color32::from_rgb(50, 110, 180) };
-    if ui.add(egui::Button::new(if on { "Dejar de seguir" } else { "Seguir al ordenador" }).fill(fill)).clicked() {
-        if on {
-            e.ui.follow.stop(&mut e.droid, now);
-        } else {
-            e.ui.follow.start(&mut e.droid, now);
-        }
-    }
-    ui.separator();
-    ui.add(egui::Slider::new(&mut e.ui.follow.near_threshold, -80.0..=-35.0).step_by(1.0).text("dBm para considerar «cerca»"));
-    if ui.add_enabled(e.ui.follow.smoothed.is_some(), egui::Button::new("Usar la señal actual como «cerca»")).clicked() {
-        e.ui.follow.calibrate_near();
-    }
-    ui.add(egui::Slider::new(&mut e.ui.follow.speed, 30.0..=120.0).text("velocidad"));
-    ui.small("Para calibrar: coloca el droide junto al ordenador, pulsa «Seguir» y luego «Usar la señal actual».");
-    ui.separator();
-    ui.label(
-        "El droide solo conoce la intensidad de la señal Bluetooth, no la dirección. Avanza despacio y, si la señal \
-         empeora poco a poco, corrige el rumbo con giros suaves; solo da media vuelta si la señal cae de golpe. \
-         Si la señal baja de -85 dBm se para para no perderse. Es aproximado: úsalo en un espacio despejado y vigílalo. \
-         En Windows la señal solo se actualiza mientras hay un escaneo activo.",
-    );
+    ui.columns(2, |cols| {
+        theme::card(&mut cols[0], "Señal Bluetooth", |ui| {
+            let s = e.ui.follow.smoothed.filter(|_| fresh);
+            ui.horizontal(|ui| {
+                theme::signal_bars(ui, s);
+                ui.label(RichText::new(s.map_or("— dBm".into(), |s| format!("{} dBm", s.round() as i32))).size(26.0).strong());
+                if let Some(s) = s {
+                    let near = e.ui.follow.near_threshold;
+                    ui.label(muted(if s >= near { "cerca" } else if s >= near - 12.0 { "a media distancia" } else { "lejos" }));
+                }
+            });
+            let marks = [(e.ui.follow.near_threshold, theme::GREEN, "cerca"), (-85.0, theme::RED, "demasiado lejos")];
+            theme::signal_chart(ui, e.ui.follow.history.iter().copied(), FOLLOW_HISTORY, &marks);
+            if !fresh {
+                ui.colored_label(theme::AMBER, "No llegan medidas de señal. Sin ellas el droide no se mueve en este modo; puede que este sistema no las dé con el droide conectado.");
+            }
+        });
+
+        let ui = &mut cols[1];
+        theme::card(ui, "Seguir al ordenador", |ui| {
+            ui.label(RichText::new(&e.ui.follow.status).strong());
+            if let Some(t) = e.ui.follow.target_heading() {
+                ui.label(muted(format!("Rumbo estimado hacia ti: {}°", t as i32)));
+            }
+            if theme::start_stop(ui, on, "Empezar a seguir", "Dejar de seguir") {
+                if on {
+                    e.ui.follow.stop(&mut e.droid, now);
+                } else {
+                    e.ui.follow.start(&mut e.droid, now);
+                }
+            }
+        });
+        theme::card(ui, "Ajustes", |ui| {
+            ui.add(egui::Slider::new(&mut e.ui.follow.near_threshold, -80.0..=-35.0).step_by(1.0).suffix(" dBm").text("«cerca»"));
+            if ui.add_enabled(e.ui.follow.smoothed.is_some() && fresh, egui::Button::new("Usar la señal actual como «cerca»")).clicked() {
+                e.ui.follow.calibrate_near();
+            }
+            ui.label(muted("Para calibrar, deja el droide a la distancia a la que quieres que se pare y pulsa el botón."));
+            ui.add(egui::Slider::new(&mut e.ui.follow.speed, 30.0..=120.0).fixed_decimals(0).text("velocidad"));
+        });
+    });
+    theme::card(ui, "Cómo funciona", |ui| {
+        ui.label(muted(
+            "El droide solo conoce la intensidad de la señal Bluetooth, no la dirección. Avanza zigzagueando, apunta la señal \
+             en cada punto del recorrido y con las medidas de los últimos segundos calcula hacia dónde crece; hacia ahí corrige \
+             el rumbo. Frena al acercarse, se para si deja de recibir medidas y, si la señal baja de -85 dBm, vuelve sobre sus \
+             pasos una vez antes de detenerse. Es aproximado: úsalo en un espacio despejado y vigílalo. \
+             En Windows la señal solo se actualiza mientras hay un escaneo activo.",
+        ));
+    });
 }
 
 fn patrol_tab(ui: &mut egui::Ui, e: &mut Entry, now: Instant) {
-    ui.add(egui::Slider::new(&mut e.ui.patrol.speed, 30.0..=150.0).text("velocidad"));
-    let on = e.ui.patrol.running;
-    let fill = if on { Color32::from_rgb(170, 50, 50) } else { Color32::from_rgb(50, 110, 180) };
-    if ui.add(egui::Button::new(if on { "Detener patrulla" } else { "Iniciar patrulla" }).fill(fill)).clicked() {
-        if on {
-            e.ui.patrol.stop(&mut e.droid, now);
-        } else {
-            e.ui.patrol.start(&mut e.droid, now);
+    theme::card(ui, "Patrulla", |ui| {
+        ui.label(muted("El droide avanza solo, retrocede y gira al chocar, y de vez en cuando lanza una alarma. Déjalo en un espacio despejado."));
+        ui.add(egui::Slider::new(&mut e.ui.patrol.speed, 30.0..=150.0).fixed_decimals(0).text("velocidad"));
+        let on = e.ui.patrol.running;
+        if theme::start_stop(ui, on, "Iniciar patrulla", "Detener patrulla") {
+            if on {
+                e.ui.patrol.stop(&mut e.droid, now);
+            } else {
+                e.ui.patrol.start(&mut e.droid, now);
+            }
         }
-    }
-    ui.small("El droide avanza solo, retrocede y gira al chocar, y de vez en cuando lanza una alarma. Déjalo en un espacio despejado.");
-    ui.separator();
-    ui.strong("Registro de eventos");
-    for line in &e.ui.patrol.entries {
-        ui.monospace(line);
-    }
+    });
+    theme::card(ui, "Registro de eventos", |ui| {
+        if e.ui.patrol.entries.is_empty() {
+            ui.label(muted("Sin eventos todavía."));
+        }
+        for line in &e.ui.patrol.entries {
+            ui.monospace(line);
+        }
+    });
 }
 
 fn draw_tab(ui: &mut egui::Ui, e: &mut Entry, now: Instant) {
-    let size = Vec2::new(ui.available_width(), 320.0);
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::drag());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 6.0, Color32::from_gray(30));
-    painter.text(rect.center_top() + Vec2::new(0.0, 6.0), egui::Align2::CENTER_TOP, "▲ delante del droide", egui::FontId::proportional(12.0), Color32::GRAY);
-    if (resp.dragged() || resp.drag_started()) && !e.ui.draw.running && e.ui.draw.points.len() < 2000 {
-        if let Some(p) = resp.interact_pointer_pos() {
-            e.ui.draw.points.push((p.x - rect.min.x, p.y - rect.min.y));
-        }
-    }
-    let at = |p: &(f32, f32)| rect.min + Vec2::new(p.0, p.1);
-    for w in e.ui.draw.points.windows(2) {
-        painter.line_segment([at(&w[0]), at(&w[1])], Stroke::new(3.0, Color32::from_rgb(110, 170, 230)));
-    }
-    if let Some(p) = e.ui.draw.points.first() {
-        painter.circle_filled(at(p), 7.0, Color32::from_rgb(90, 200, 120));
-    }
-    ui.add(egui::ProgressBar::new(e.ui.draw.progress));
-    ui.horizontal(|ui| {
-        let on = e.ui.draw.running;
-        let fill = if on { Color32::from_rgb(170, 50, 50) } else { Color32::from_rgb(50, 110, 180) };
-        if ui.add_enabled(on || e.ui.draw.points.len() >= 2, egui::Button::new(if on { "Detener" } else { "Ejecutar recorrido" }).fill(fill)).clicked() {
-            if on {
-                e.ui.draw.abort(&mut e.droid, now);
-            } else {
-                e.ui.draw.run(&mut e.droid, now);
+    theme::card(ui, "", |ui| {
+        ui.label(muted("Dibuja el recorrido con el ratón o el dedo. El punto verde es la salida."));
+        let size = Vec2::new(ui.available_width(), 320.0);
+        let (rect, resp) = ui.allocate_exact_size(size, Sense::drag());
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 8.0, ui.visuals().extreme_bg_color);
+        painter.rect_stroke(rect, 8.0, Stroke::new(1.0, theme::BORDER), egui::StrokeKind::Inside);
+        painter.text(rect.center_top() + Vec2::new(0.0, 8.0), egui::Align2::CENTER_TOP, "▲ delante del droide", egui::FontId::proportional(12.5), theme::MUTED);
+        if (resp.dragged() || resp.drag_started()) && !e.ui.draw.running && e.ui.draw.points.len() < 2000 {
+            if let Some(p) = resp.interact_pointer_pos() {
+                e.ui.draw.points.push((p.x - rect.min.x, p.y - rect.min.y));
             }
         }
-        if ui.button("Borrar").clicked() {
-            e.ui.draw.clear(&mut e.droid, now);
+        let at = |p: &(f32, f32)| rect.min + Vec2::new(p.0, p.1);
+        for w in e.ui.draw.points.windows(2) {
+            painter.line_segment([at(&w[0]), at(&w[1])], Stroke::new(3.0, theme::ACCENT));
         }
+        if let Some(p) = e.ui.draw.points.first() {
+            painter.circle_filled(at(p), 7.0, theme::GREEN);
+        }
+        ui.add(egui::ProgressBar::new(e.ui.draw.progress));
+        ui.horizontal(|ui| {
+            let on = e.ui.draw.running;
+            ui.add_enabled_ui(on || e.ui.draw.points.len() >= 2, |ui| {
+                if theme::start_stop(ui, on, "Ejecutar recorrido", "Detener") {
+                    if on {
+                        e.ui.draw.abort(&mut e.droid, now);
+                    } else {
+                        e.ui.draw.run(&mut e.droid, now);
+                    }
+                }
+            });
+            if ui.button("Borrar").clicked() {
+                e.ui.draw.clear(&mut e.droid, now);
+            }
+        });
     });
-    egui::CollapsingHeader::new("Calibración").show(ui, |ui| {
-        ui.add(egui::Slider::new(&mut e.ui.draw.speed, 40.0..=160.0).text("velocidad"));
-        ui.add(egui::Slider::new(&mut e.ui.draw.cm_per_second, 10.0..=100.0).text("cm/s a esa velocidad"));
+    theme::card(ui, "Calibración", |ui| {
+        ui.label(muted("Sin sensores de posición, el recorrido se calcula por tiempo. Ajusta estos valores a tu suelo."));
+        ui.add(egui::Slider::new(&mut e.ui.draw.speed, 40.0..=160.0).fixed_decimals(0).text("velocidad"));
+        ui.add(egui::Slider::new(&mut e.ui.draw.cm_per_second, 10.0..=100.0).fixed_decimals(0).text("cm/s a esa velocidad"));
         ui.add(egui::Slider::new(&mut e.ui.draw.cm_per_point, 0.1..=1.0).text("cm por punto del dibujo"));
     });
 }
 
-// ---------------------------------------------------------------------------- luces, energía, ajustes, log
+// ---------------------------------------------------------------------------- luces, ajustes, registro
 
 fn lights_tab(ui: &mut egui::Ui, e: &mut Entry) {
-    for ch in e.droid.kind.lights() {
-        match ch.style {
-            LightStyle::Rgb(..) | LightStyle::V1Main => {
-                let rgb = e.ui.light_rgb.entry(ch.title).or_insert([0, 0, 255]);
-                ui.horizontal(|ui| {
-                    ui.label(ch.title);
-                    if ui.color_edit_button_srgb(rgb).changed() {
-                        let v = *rgb;
-                        e.droid.set_light_rgb(&ch, v);
+    theme::card(ui, "Luces", |ui| {
+        egui::Grid::new("lights").num_columns(2).spacing([18.0, 10.0]).show(ui, |ui| {
+            for ch in e.droid.kind.lights() {
+                ui.label(ch.title);
+                match ch.style {
+                    LightStyle::Rgb(..) | LightStyle::V1Main => {
+                        let rgb = e.ui.light_rgb.entry(ch.title).or_insert([0, 0, 255]);
+                        if ui.color_edit_button_srgb(rgb).changed() {
+                            let v = *rgb;
+                            e.droid.set_light_rgb(&ch, v);
+                        }
                     }
-                });
-            }
-            LightStyle::Mono(_) | LightStyle::V1Back => {
-                let level = e.ui.light_level.entry(ch.title).or_insert(0.0);
-                if ui.add(egui::Slider::new(level, 0.0..=255.0).text(ch.title)).changed() {
-                    let v = *level as u8;
-                    e.droid.set_light_level(&ch, v);
+                    LightStyle::Mono(_) | LightStyle::V1Back => {
+                        let level = e.ui.light_level.entry(ch.title).or_insert(0.0);
+                        if ui.add(egui::Slider::new(level, 0.0..=255.0).fixed_decimals(0)).changed() {
+                            let v = *level as u8;
+                            e.droid.set_light_level(&ch, v);
+                        }
+                    }
                 }
+                ui.end_row();
             }
+        });
+        if e.droid.kind.uses_v2() && ui.button("Restablecer luces").clicked() {
+            e.droid.reset_lights();
         }
-    }
-    if e.droid.kind.uses_v2() && ui.button("Restablecer luces").clicked() {
-        e.droid.reset_lights();
-    }
-}
-
-fn energy_tab(ui: &mut egui::Ui, e: &mut Entry) {
-    ui.strong("Energía");
-    if ui.button("Despertar").clicked() {
-        e.droid.wake();
-    }
-    if ui.button("Dormir").clicked() {
-        e.droid.sleep(false);
-    }
-    if e.droid.kind.uses_v2() && ui.button("Sueño profundo").clicked() {
-        e.droid.sleep(true);
-    }
-    if ui.add(egui::Button::new("Desconectar").fill(Color32::from_rgb(170, 50, 50))).clicked() {
-        e.droid.disconnect();
-    }
+    });
 }
 
 fn settings_tab(ui: &mut egui::Ui, e: &mut Entry) {
     let kind = e.droid.kind;
-    ui.strong("Droide");
-    ui.label(format!("Nombre: {}", e.droid.name));
-    ui.label(format!("Modelo: {}", kind.title()));
-    ui.label(format!("Batería: {} · {}", e.droid.battery.text(), e.droid.battery_text));
-    if ui.button("Actualizar batería").clicked() {
-        e.droid.request_battery();
-    }
-    if kind.uses_v2() {
-        ui.label(format!("Firmware Nordic: {}", e.droid.versions.get("Nordic").map_or("—", |s| s.as_str())));
-        ui.label(format!("Firmware principal: {}", e.droid.versions.get("Principal").map_or("—", |s| s.as_str())));
-        if ui.button("Leer versiones").clicked() {
-            e.droid.request_versions();
-        }
-        ui.label(format!("Direcciones: {}", e.droid.routing_text));
-    }
-    ui.label(format!("Firmware en el APK: {}", kind.bundled_firmware()));
-
-    if kind.uses_v2() {
-        ui.separator();
-        ui.strong("Comportamiento autónomo");
-        let before = e.ui.interactions;
-        egui::ComboBox::from_label("Interacciones").selected_text(before.title()).show_ui(ui, |ui| {
-            for m in Interactions::ALL {
-                ui.selectable_value(&mut e.ui.interactions, m, m.title());
-            }
+    ui.columns(2, |cols| {
+        theme::card(&mut cols[0], "Droide", |ui| {
+            egui::Grid::new("info").num_columns(2).spacing([18.0, 8.0]).show(ui, |ui| {
+                let mut line = |k: &str, v: String| {
+                    ui.label(muted(k));
+                    ui.label(v);
+                    ui.end_row();
+                };
+                line("Nombre", e.droid.name.clone());
+                line("Modelo", kind.title().into());
+                line("Batería", format!("{} · {}", e.droid.battery.text(), e.droid.battery_text));
+                if kind.uses_v2() {
+                    line("Firmware Nordic", e.droid.versions.get("Nordic").cloned().unwrap_or("—".into()));
+                    line("Firmware principal", e.droid.versions.get("Principal").cloned().unwrap_or("—".into()));
+                    line("Direcciones", e.droid.routing_text.clone());
+                }
+                line("Firmware en el APK", kind.bundled_firmware().into());
+            });
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Actualizar batería").clicked() {
+                    e.droid.request_battery();
+                }
+                if kind.uses_v2() && ui.button("Leer versiones").clicked() {
+                    e.droid.request_versions();
+                }
+            });
         });
-        if e.ui.interactions != before {
-            e.droid.set_interactions(e.ui.interactions);
-        }
-        let mut trophy = e.droid.trophy_mode;
-        if ui.checkbox(&mut trophy, "Modo trofeo").changed() {
-            e.droid.set_trophy_mode(trophy);
-        }
-        if kind.has_dome() {
-            let mut tracking = e.droid.head_tracking;
-            if ui.checkbox(&mut tracking, "La cúpula sigue al movimiento").changed() {
-                e.droid.set_head_tracking(tracking);
-            }
-        }
-    }
 
-    ui.separator();
-    ui.checkbox(&mut e.droid.react_to_hits, "Reaccionar a los golpes");
+        let ui = &mut cols[1];
+        theme::card(ui, "Energía", |ui| {
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Despertar").clicked() {
+                    e.droid.wake();
+                }
+                if ui.button("Dormir").clicked() {
+                    e.droid.sleep(false);
+                }
+                if kind.uses_v2() && ui.button("Sueño profundo").clicked() {
+                    e.droid.sleep(true);
+                }
+                if ui.add(theme::danger("Desconectar")).clicked() {
+                    e.droid.disconnect();
+                }
+            });
+        });
+        theme::card(ui, "Comportamiento", |ui| {
+            if kind.uses_v2() {
+                let before = e.ui.interactions;
+                egui::ComboBox::from_label("Interacciones").selected_text(before.title()).show_ui(ui, |ui| {
+                    for m in Interactions::ALL {
+                        ui.selectable_value(&mut e.ui.interactions, m, m.title());
+                    }
+                });
+                if e.ui.interactions != before {
+                    e.droid.set_interactions(e.ui.interactions);
+                }
+                let mut trophy = e.droid.trophy_mode;
+                if ui.checkbox(&mut trophy, "Modo trofeo").changed() {
+                    e.droid.set_trophy_mode(trophy);
+                }
+                if kind.has_dome() {
+                    let mut tracking = e.droid.head_tracking;
+                    if ui.checkbox(&mut tracking, "La cúpula sigue al movimiento").changed() {
+                        e.droid.set_head_tracking(tracking);
+                    }
+                }
+            }
+            ui.checkbox(&mut e.droid.react_to_hits, "Reaccionar a los golpes");
+        });
+    });
 
     if kind.uses_v2() {
-        ui.separator();
-        ui.strong("Renombrar");
-        ui.text_edit_singleline(&mut e.ui.rename);
-        let prefix = format!("{}-", kind.prefix());
-        let valid = e.ui.rename.len() == prefix.len() + 4
-            && e.ui.rename.starts_with(&prefix)
-            && e.ui.rename[prefix.len()..].chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
-        ui.small(format!("Debe conservar el prefijo {prefix} y tener 4 letras o números; si no, la app no volverá a encontrarlo."));
-        if ui.add_enabled(valid, egui::Button::new("Cambiar nombre Bluetooth")).clicked() {
-            let name = e.ui.rename.clone();
-            e.droid.rename(&name);
-        }
+        theme::card(ui, "Renombrar", |ui| {
+            let prefix = format!("{}-", kind.prefix());
+            let valid = e.ui.rename.len() == prefix.len() + 4
+                && e.ui.rename.starts_with(&prefix)
+                && e.ui.rename[prefix.len()..].chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut e.ui.rename).hint_text(format!("{prefix}XXXX")).desired_width(160.0));
+                if ui.add_enabled(valid, egui::Button::new("Cambiar nombre Bluetooth")).clicked() {
+                    let name = e.ui.rename.clone();
+                    e.droid.rename(&name);
+                }
+            });
+            ui.label(muted(format!("Debe conservar el prefijo {prefix} y tener 4 letras o números; si no, la app no volverá a encontrarlo.")));
+        });
     }
-    ui.separator();
-    ui.small(
+    ui.label(muted(
         "No incluido: actualización de firmware (OTA), realidad aumentada, tienda, Force Band y sincronía de Watch With Me \
          con películas. Dependen de servicios o recursos de la app original, o pueden dejar el droide inservible si fallan.",
-    );
+    ));
 }
 
 fn log_tab(ui: &mut egui::Ui, e: &mut Entry) {
     ui.horizontal(|ui| {
-        if ui.button("Copiar log").clicked() {
+        if ui.add(theme::primary("Copiar registro")).clicked() {
             let head = format!(
                 "Droide: {} ({})\nDirecciones: {}\nVersiones: {:?}\nBatería: {} {}\n---\n",
                 e.droid.name, e.droid.kind.title(), e.droid.routing_text, e.droid.versions, e.droid.battery.text(), e.droid.battery_text
@@ -1088,10 +1282,14 @@ fn log_tab(ui: &mut egui::Ui, e: &mut Entry) {
             e.droid.log.clear();
         }
     });
-    ui.separator();
-    for line in &e.droid.log {
-        ui.monospace(line);
-    }
+    theme::card(ui, "", |ui| {
+        if e.droid.log.is_empty() {
+            ui.label(muted("Registro vacío."));
+        }
+        for line in &e.droid.log {
+            ui.monospace(line);
+        }
+    });
 }
 
 #[allow(dead_code)]

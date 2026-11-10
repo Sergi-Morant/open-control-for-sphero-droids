@@ -93,6 +93,8 @@ pub struct Droid {
     pub routing_text: String,
     /// Señal Bluetooth medida desde este ordenador (dBm).
     pub rssi: Option<i16>,
+    /// Cuándo llegó la última medida de señal.
+    pub rssi_at: Option<Instant>,
     pub busy_until: Option<Instant>,
     pub chatter: bool,
     pub react_to_hits: bool,
@@ -134,6 +136,7 @@ impl Droid {
             versions: BTreeMap::new(),
             routing_text: "sin detectar".into(),
             rssi: None,
+            rssi_at: None,
             busy_until: None,
             chatter: false,
             react_to_hits: true,

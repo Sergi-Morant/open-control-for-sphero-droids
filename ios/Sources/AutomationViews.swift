@@ -196,10 +196,10 @@ struct FollowView: View {
                     Slider(value: $follow.speed, in: 30...120)
                 }
             } header: { Text("Ajustes") } footer: {
-                Text("Para calibrar: coloca el droide junto al móvil, pulsa «Seguir» y luego «Usar la señal actual».")
+                Text("Para calibrar: con el modo en marcha, deja el droide a la distancia a la que quieres que se pare y pulsa «Usar la señal actual».")
             }
             Section("Cómo funciona") {
-                Text("El droide solo conoce la intensidad de la señal Bluetooth, no la dirección. Avanza despacio y, si la señal empeora poco a poco, corrige el rumbo con giros suaves; solo da media vuelta si la señal cae de golpe. Si la señal baja de -85 dBm se para para no perderse. Es aproximado: úsalo en un espacio despejado y vigílalo. Al chocar, rectifica.")
+                Text("El droide solo conoce la intensidad de la señal Bluetooth, no la dirección. Avanza zigzagueando, apunta la señal en cada punto del recorrido y con las medidas de los últimos segundos calcula hacia dónde crece; hacia ahí corrige el rumbo. Frena al acercarse, se para si deja de recibir medidas y, si la señal baja de -85 dBm, vuelve sobre sus pasos una vez antes de detenerse. Es aproximado: úsalo en un espacio despejado y vigílalo. Al chocar, rectifica.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }

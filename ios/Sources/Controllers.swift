@@ -235,11 +235,17 @@ final class EmoteLoopController: ObservableObject {
 // MARK: - Seguir al móvil
 
 /// Sigue al iPhone usando solo la intensidad de la señal Bluetooth (RSSI).
-/// El RSSI no da dirección y fluctúa mucho, así que se hace "avanzar y rectificar": el droide avanza,
-/// corrige el rumbo con giros suaves si la señal empeora poco a poco, y solo da media vuelta si cae de golpe.
-/// Es aproximado y funciona mejor en un espacio despejado.
+///
+/// El RSSI no da dirección y fluctúa mucho. En vez de reaccionar a medidas sueltas, el droide avanza
+/// zigzagueando y apunta cada medida junto a su posición estimada (se calcula con las órdenes enviadas,
+/// sin sensores). Con las medidas de los últimos segundos se ajusta un plano: su pendiente indica hacia
+/// dónde crece la señal, y hacia ahí se corrige el rumbo. El zigzag hace falta para ver también la
+/// pendiente lateral. Frena al acercarse, se para si deja de recibir medidas y sigue siendo aproximado.
+/// Es el mismo algoritmo que `Follow` en la app de escritorio (desktop/src/controllers.rs), que lo prueba
+/// con una simulación.
 final class FollowController: ObservableObject {
-    private enum Phase { case forward, settling(Date), arrived }
+    private enum Phase: Equatable { case forward, settling(Date), arrived }
+    struct Sample { let x: Double, y: Double, rssi: Double }
 
     @Published var running = false
     @Published var smoothed: Double?
@@ -247,21 +253,31 @@ final class FollowController: ObservableObject {
     @Published var nearThreshold = -55.0   // dBm; por encima de esto se considera «ya he llegado»
     @Published var speed = 45.0
 
-    private let window = 3.0          // segundos entre comprobaciones de la tendencia
-    private let mildDrop = -2.5       // dB: empeora un poco → giro suave
-    private let sharpDrop = -6.0      // dB: caída brusca → media vuelta
-    private let lostLevel = -85.0     // dBm: por debajo se para para no perder al droide
-    private var turnSign = 1
-    private var corrected = false
+    private let leg = 1.8             // segundos de cada tramo del zigzag
+    private let weave = 30.0          // grados que se desvía cada tramo a un lado y a otro del rumbo
+    private let fitWindow = 36        // medidas que se usan para estimar la pendiente (unos 12 s)
+    private let fitMinStrength = 0.8  // dB que tiene que explicar la pendiente para fiarse de ella
+    private let lostLevel = -85.0     // dBm: por debajo vuelve sobre sus pasos y, si sigue igual, se para
+    private let stale = 2.5           // segundos sin medidas tras los que el droide se para
+    private let hysteresis = 5.0      // dB que tiene que alejarse la señal para volver a moverse tras llegar
 
     private weak var droid: Droid?
     private var timer: Timer?
     private var rssiSub: AnyCancellable?
     private var hitSub: AnyCancellable?
     private var phase = Phase.forward
+    private var target = 0.0          // rumbo hacia el que se cree que está el móvil
+    private var weaveSign = 1.0
     private var heading = 0
-    private var lastEval: Double?
-    private var nextEval = Date()
+    private var command = (speed: 0, heading: 0)
+    private var pos = (x: 0.0, y: 0.0)
+    private var lastTick = Date()
+    private var samples: [Sample] = []
+    private var recent: [Double] = []
+    private var lastSampleAt: Date?
+    private var legEnd = Date()
+    private var retreated = false
+    private var stalled = false
     private var ticks = 0
 
     deinit { timer?.invalidate() }
@@ -271,11 +287,14 @@ final class FollowController: ObservableObject {
         droid = d
         running = true
         phase = .forward
-        heading = 0
+        target = 0; weaveSign = 1
+        pos = (0, 0)
+        samples = []; recent = []
         smoothed = nil
-        lastEval = nil
-        nextEval = Date().addingTimeInterval(window)
-        corrected = false
+        lastSampleAt = nil
+        retreated = false; stalled = false
+        lastTick = Date()
+        newLeg(lastTick)
         status = "Esperando señal…"
         d.configureCollisions()
         rssiSub = d.$rssi.compactMap { $0 }.sink { [weak self] v in self?.ingest(Double(v)) }
@@ -287,69 +306,166 @@ final class FollowController: ObservableObject {
         timer?.invalidate(); timer = nil
         rssiSub = nil; hitSub = nil
         if running { droid?.stop(heading: heading) }
+        command = (0, heading)
         running = false
         status = "Detenido"
     }
 
-    /// Coloca el droide junto al móvil y úsalo para fijar qué señal significa «cerca».
+    /// Deja el droide a la distancia a la que quieres que se pare y úsalo para fijar qué señal significa «cerca».
     func calibrateNear() {
-        if let s = smoothed { nearThreshold = (s - 2).rounded() }
+        if let s = smoothed { nearThreshold = min(max((s - 3).rounded(), -80), -35) }
     }
 
+    /// Ajusta un plano a las medidas y devuelve (rumbo hacia el que crece la señal, dB que explica).
+    static func gradient(_ samples: [Sample]) -> (bearing: Double, strength: Double)? {
+        let n = Double(samples.count)
+        guard samples.count >= 10 else { return nil }
+        let mx = samples.reduce(0) { $0 + $1.x } / n
+        let my = samples.reduce(0) { $0 + $1.y } / n
+        let mr = samples.reduce(0) { $0 + $1.rssi } / n
+        var sxx = 0.0, sxy = 0.0, syy = 0.0, sxr = 0.0, syr = 0.0
+        for s in samples {
+            let dx = s.x - mx, dy = s.y - my, dr = s.rssi - mr
+            sxx += dx * dx; sxy += dx * dy; syy += dy * dy; sxr += dx * dr; syr += dy * dr
+        }
+        let spread = sxx + syy
+        guard spread > 1e-3 else { return nil }
+        // Regularización: si el recorrido es casi una línea, la pendiente lateral se queda en cero en vez de dispararse.
+        let ridge = 0.08 * spread
+        let a = sxx + ridge, d = syy + ridge
+        let det = a * d - sxy * sxy
+        let gx = (d * sxr - sxy * syr) / det
+        let gy = (a * syr - sxy * sxr) / det
+        var bearing = atan2(gx, gy) * 180 / .pi
+        if bearing < 0 { bearing += 360 }
+        return (bearing, hypot(gx, gy) * (spread / n).squareRoot())
+    }
+
+    private static func norm(_ a: Double) -> Double {
+        let r = a.truncatingRemainder(dividingBy: 360)
+        return r < 0 ? r + 360 : r
+    }
+
+    /// Diferencia b − a en (−180, 180].
+    private static func angleDiff(_ a: Double, _ b: Double) -> Double {
+        var d = (b - a).truncatingRemainder(dividingBy: 360)
+        if d > 180 { d -= 360 } else if d < -180 { d += 360 }
+        return d
+    }
+
+    private func newLeg(_ now: Date) {
+        legEnd = now.addingTimeInterval(leg)
+        weaveSign = -weaveSign
+        heading = Int(Self.norm(target + weave * weaveSign))
+    }
+
+    private func go(_ d: Droid, _ speed: Int) {
+        command = (speed, heading)
+        d.drive(speed: speed, heading: heading)
+    }
+
+    private func halt(_ d: Droid) {
+        command = (0, heading)
+        d.stop(heading: heading)
+    }
+
+    /// Cambio brusco de rumbo: gira sobre sí mismo un momento antes de seguir.
+    private func turn(to newTarget: Double, _ now: Date, seconds: Double) {
+        target = Self.norm(newTarget)
+        heading = Int(target)
+        phase = .settling(now.addingTimeInterval(seconds))
+    }
+
+    /// Medida nueva: mediana de 3 (quita picos) y media exponencial.
     private func ingest(_ v: Double) {
-        smoothed = smoothed.map { 0.75 * $0 + 0.25 * v } ?? v
+        lastSampleAt = Date()
+        recent.append(v)
+        if recent.count > 3 { recent.removeFirst() }
+        let median = recent.sorted()[recent.count / 2]
+        smoothed = smoothed.map { 0.65 * $0 + 0.35 * median } ?? median
+        if running, phase == .forward {
+            // Para el ajuste se usa la medida sin suavizar: suavizarla la retrasaría respecto a la posición.
+            samples.append(Sample(x: pos.x, y: pos.y, rssi: v))
+            if samples.count > fitWindow { samples.removeFirst() }
+        }
     }
 
     private func onHit() {
         guard running else { return }
-        heading = (heading + Int.random(in: 120...240)) % 360
-        phase = .settling(Date().addingTimeInterval(1.0))
+        samples = []
+        turn(to: Double(heading + Int.random(in: 120...240)), Date(), seconds: 1.0)
         status = "Obstáculo: cambio de rumbo"
     }
 
     private func tick() {
         guard let d = droid, d.isReady else { stop(); return }
-        ticks += 1
-        if ticks % 5 == 0 { d.readRSSI() }
-        guard let s = smoothed else { return }
         let now = Date()
+        let dt = min(now.timeIntervalSince(lastTick), 0.5)
+        lastTick = now
+        // Posición estimada: lo que se le ha mandado hacer desde el tick anterior.
+        if command.speed > 0 {
+            let a = Double(command.heading) * .pi / 180
+            let step = Double(command.speed) * dt
+            pos = (pos.x + sin(a) * step, pos.y + cos(a) * step)
+        }
+        ticks += 1
+        if ticks % 3 == 0 { d.readRSSI() }
+
+        // Sin medidas no se puede decidir nada: mejor quieto que avanzando a ciegas.
+        guard let at = lastSampleAt, now.timeIntervalSince(at) < stale else {
+            if lastSampleAt != nil {
+                if !stalled { stalled = true; halt(d) }
+                status = "Sin lectura de señal: esperando…"
+            }
+            return
+        }
+        if stalled { stalled = false; newLeg(now) }
+        guard let s = smoothed else { return }
+
         switch phase {
         case .arrived:
-            d.stop(heading: heading)
             status = "He llegado (\(Int(s)) dBm)"
-            if s < nearThreshold - 6 { phase = .forward; lastEval = s; nextEval = now.addingTimeInterval(window) }
+            if s < nearThreshold - hysteresis { phase = .forward; samples = []; newLeg(now) }
         case let .settling(until):
-            d.drive(speed: 0, heading: heading)
-            if now >= until { phase = .forward; lastEval = s; nextEval = now.addingTimeInterval(window) }
+            go(d, 0)   // gira sobre sí mismo hacia el rumbo nuevo
+            if now >= until { phase = .forward; newLeg(now) }
         case .forward:
-            if s >= nearThreshold { phase = .arrived; return }
-            if s <= lostLevel {
-                stop()
-                status = "Señal muy débil (\(Int(s)) dBm): parado para no perderlo"
+            if s >= nearThreshold {
+                phase = .arrived
+                halt(d)
+                status = "He llegado (\(Int(s)) dBm)"
                 return
             }
-            d.drive(speed: Int(speed), heading: heading)
-            status = "Buscando… (\(Int(s)) dBm)"
-            guard now >= nextEval else { return }
-            let delta = s - (lastEval ?? s)
-            lastEval = s
-            nextEval = now.addingTimeInterval(window)
-            if delta < sharpDrop {
-                // Caída brusca: vamos claramente en mala dirección.
-                heading = (heading + 150 + Int.random(in: -30...30) + 360) % 360
-                phase = .settling(now.addingTimeInterval(0.6))
-                corrected = false
-                status = "Caída brusca: media vuelta"
-            } else if delta < mildDrop {
-                // Empeora un poco: giro suave sin parar. Si ya se corrigió y sigue peor, se prueba el otro lado.
-                if corrected { turnSign = -turnSign }
-                heading = (heading + turnSign * (corrected ? 60 : 30) + 360) % 360
-                corrected = true
-                status = "Corrigiendo rumbo (\(Int(s)) dBm)"
-            } else {
-                corrected = false   // estable o mejora: seguimos recto
+            if s <= lostLevel {
+                if retreated {
+                    stop()
+                    status = "Señal muy débil (\(Int(s)) dBm): parado para no perderlo"
+                } else {
+                    // Una oportunidad: deshacer el camino antes de rendirse.
+                    retreated = true
+                    samples = []
+                    turn(to: target + 180, now, seconds: 0.7)
+                    status = "Señal muy débil: vuelvo sobre mis pasos"
+                }
+                return
             }
+            if s > lostLevel + 6 { retreated = false }
+            // Frena al acercarse para no pasarse de largo.
+            let slow = min(max((nearThreshold - s) / 10, 0.5), 1.0)
+            go(d, Int(speed * slow))
+            guard now >= legEnd else { return }
+            status = "Acercándome… (\(Int(s)) dBm)"
+            if let g = Self.gradient(samples), g.strength >= fitMinStrength {
+                let diff = Self.angleDiff(target, g.bearing)
+                if abs(diff) > 100 {
+                    turn(to: g.bearing, now, seconds: 0.7)
+                    status = "La señal cae: media vuelta"
+                    return
+                }
+                target = Self.norm(target + 0.7 * diff)
+                if abs(diff) > 20 { status = "Corrigiendo rumbo (\(Int(s)) dBm)" }
+            }
+            newLeg(now)
         }
-
     }
 }

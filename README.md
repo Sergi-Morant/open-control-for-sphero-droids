@@ -31,7 +31,7 @@ Las dos aplicaciones tienen las mismas pestañas, salvo lo indicado:
 - **Emociones:** las animaciones de cada droide (R2-D2 55, R2-Q5 50, BB-9E 44) con su duración.
 - **Automático** (también dentro de Sonidos): «Vamos a ver una película» (emotes de Watch With Me) y «Haz monerías» (emotes de Emociones) al azar cada N segundos, con opción de incluir o no el Ion Blast.
 - **Sonidos:** catálogo del droide con buscador, volumen y charla aleatoria.
-- **Seguir:** el droide intenta seguir al dispositivo usando solo la intensidad de la señal Bluetooth (aproximado).
+- **Seguir:** el droide intenta seguir al dispositivo usando solo la intensidad de la señal Bluetooth: avanza en zigzag y corrige el rumbo hacia donde crece la señal (aproximado).
 - **Patrulla, Dibujar y conducir, Luces, Energía, Ajustes, Log.**
 - **Parar todo:** botón siempre visible, más un botón por cada actividad en marcha.
 - Nombres de sonidos y animaciones **en español con el original entre paréntesis**, p. ej. `Acceso a paneles (R2_Access Panels)`.
@@ -97,7 +97,7 @@ En modo escritorio, abre una terminal (Konsole) y ejecuta:
 curl -fsSL https://raw.githubusercontent.com/Sergi-Morant/open-control-for-sphero-droids/main/desktop/packaging/steamdeck/install.sh | bash
 ```
 
-No necesita `sudo` ni modifica el sistema. Instala en tu carpeta personal y crea un acceso en el menú. Para que los controles de la Deck lleguen como mando, añade la app a Steam como «juego que no es de Steam». Para quitarla: `install.sh --uninstall`. **Sin probar** con droide real.
+No necesita `sudo` ni modifica el sistema. Instala en tu carpeta personal, crea un acceso en el menú y, con Steam abierto, la añade a tu biblioteca (sección «No de Steam») para abrirla desde el modo juego con los controles de la Deck como mando. Si se actualiza, basta con volver a ejecutarlo. Para quitarla: `install.sh --uninstall`. **Sin probar** en una Deck real.
 
 Para compilar en Linux hacen falta `libdbus-1-dev`, `libudev-dev`, `pkg-config` y las librerías de X11/Wayland (ver `.github/workflows/desktop.yml`).
 
