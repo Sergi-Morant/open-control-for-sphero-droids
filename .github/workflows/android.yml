@@ -1,0 +1,51 @@
+name: Android
+
+on:
+  push:
+    branches: [main]
+    paths: ["android/**", ".github/workflows/android.yml"]
+  pull_request:
+    paths: ["android/**"]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write # para adjuntar el APK a la release
+
+defaults:
+  run:
+    working-directory: android
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Pruebas
+        run: ./gradlew testDebugUnitTest --console=plain
+
+      # Sin clave propia: se firma con la clave de depuración del propio runner, que cambia en cada compilación.
+      # Para actualizar hay que desinstalar antes la versión anterior.
+      - name: Compilar APK
+        run: |
+          ./gradlew assembleRelease --console=plain
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk dist/open-control-for-sphero-droids-android.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: open-control-for-sphero-droids-android
+          path: android/dist/*
+
+      - name: Adjuntar a la release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/* --clobber --repo "${{ github.repository }}"

@@ -13,8 +13,11 @@ struct ContentView: View {
                     MainView(showConnect: $showConnect)
                 }
             }
+            .background(Theme.bg)
             .navigationTitle("Open control for Sphero Droids")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.panel, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
         }
         .sheet(isPresented: $showConnect) {
             NavigationStack {
@@ -23,7 +26,11 @@ struct ContentView: View {
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar { Button("Cerrar") { showConnect = false } }
             }
+            .preferredColorScheme(.dark)
+            .tint(Theme.accent)
         }
+        .preferredColorScheme(.dark)
+        .tint(Theme.accent)
     }
 }
 
@@ -33,33 +40,49 @@ struct ConnectView: View {
     @EnvironmentObject var manager: DroidManager
 
     var body: some View {
-        List {
-            Section {
-                Text(manager.bluetoothText).foregroundStyle(.secondary)
-                Button(manager.scanning ? "Buscando…" : "Buscar droides", action: manager.startScan)
-                    .disabled(manager.scanning)
-            } footer: {
-                Text("Busca BB-8, R2-D2, BB-9E y R2-Q5. Despierta al droide sacándolo del cargador.")
+        Screen {
+            Card {
+                Button(action: manager.startScan) {
+                    HStack(spacing: 10) {
+                        if manager.scanning { ProgressView().tint(.white) }
+                        Text(manager.scanning ? "Buscando…" : "Buscar droides").font(.body.weight(.semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .background(Theme.accent.opacity(manager.scanning ? 0.5 : 1), in: RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+                .disabled(manager.scanning)
+                Text(manager.bluetoothText).font(.footnote)
+                Hint("Busca BB-8, R2-D2, BB-9E y R2-Q5. Despierta al droide sacándolo del cargador.")
             }
 
             if !manager.droids.isEmpty {
-                Section("Conectados") {
+                Card("Conectados") {
                     ForEach(manager.droids) { d in ConnectedRow(droid: d) }
                 }
             }
 
-            Section("Encontrados") {
+            Card("Encontrados") {
+                if manager.found.isEmpty {
+                    Hint(manager.scanning ? "Buscando droides cercanos…" : "Nada todavía. Pulsa «Buscar droides».")
+                }
                 ForEach(manager.found) { f in
-                    Button { manager.connect(f) } label: {
-                        HStack {
-                            Image(systemName: f.kind.symbol)
-                            VStack(alignment: .leading) { Text(f.name); Text(f.kind.title).font(.caption).foregroundStyle(.secondary) }
-                            Spacer()
-                            Text("\(f.rssi) dBm").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 10) {
+                        SignalBars(dbm: Double(f.rssi))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(f.name).font(.body.weight(.semibold))
+                            Text("\(f.kind.title) · \(f.rssi) dBm").font(.caption).foregroundStyle(Theme.muted)
+                        }
+                        Spacer()
+                        if manager.droids.contains(where: { $0.id == f.id && $0.link != .disconnected }) {
+                            Text("Conectado").font(.footnote).foregroundStyle(Theme.muted)
+                        } else {
+                            Button("Conectar") { manager.connect(f) }
+                                .buttonStyle(ChipButtonStyle(fill: Theme.accent)).foregroundStyle(.white)
                         }
                     }
                 }
-                if manager.found.isEmpty { Text("Nada todavía").foregroundStyle(.secondary) }
             }
         }
     }
@@ -70,11 +93,14 @@ struct ConnectedRow: View {
     @ObservedObject var droid: Droid
 
     var body: some View {
-        HStack {
-            Image(systemName: droid.kind.symbol)
-            VStack(alignment: .leading) { Text("\(droid.name) · \(droid.kind.title)"); Text(droid.status).font(.caption).foregroundStyle(.secondary) }
+        HStack(spacing: 10) {
+            Circle().fill(droid.isReady ? Theme.green : Theme.amber).frame(width: 10, height: 10)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(droid.name) · \(droid.kind.title)").font(.body.weight(.semibold))
+                Text(droid.status).font(.caption).foregroundStyle(Theme.muted)
+            }
             Spacer()
-            Button("Desconectar", role: .destructive) { manager.disconnect(droid) }.font(.caption)
+            Button("Desconectar") { manager.disconnect(droid) }.buttonStyle(ChipButtonStyle())
         }
     }
 }
@@ -90,6 +116,7 @@ struct MainView: View {
             DroidBar(showConnect: $showConnect)
             if let d = manager.active { DroidTabs(droid: d).id(d.id) }
         }
+        .background(Theme.bg)
     }
 }
 
@@ -101,9 +128,14 @@ struct DroidBar: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack {
                 ForEach(manager.droids) { d in DroidChip(droid: d, selected: d.id == manager.active?.id) { manager.activeID = d.id } }
-                Button { showConnect = true } label: { Image(systemName: "plus.circle.fill").font(.title2) }
+                Button { showConnect = true } label: {
+                    Label("Añadir", systemImage: "plus").font(.callout)
+                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .background(Theme.widget, in: Capsule())
+                }
+                .buttonStyle(.plain)
             }
-            .padding(.horizontal).padding(.vertical, 8)
+            .padding(.horizontal, 14).padding(.vertical, 8)
         }
     }
 }
@@ -116,17 +148,22 @@ struct DroidChip: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                Image(systemName: droid.kind.symbol)
-                Text(droid.kind.title)
-                Image(systemName: droid.batteryLevel.symbol)
-                Circle().fill(droid.isReady ? .green : .orange).frame(width: 8, height: 8)
+                Circle().fill(droid.isReady ? Theme.green : Theme.amber).frame(width: 9, height: 9)
+                Text(droid.kind.title).font(.callout.weight(.semibold))
+                Image(systemName: droid.batteryLevel.symbol).foregroundStyle(Theme.muted)
             }
-            .padding(.horizontal, 12).padding(.vertical, 6)
-            .background(selected ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.15), in: Capsule())
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(selected ? Theme.accent.opacity(0.35) : Theme.widget, in: Capsule())
+            .overlay(Capsule().stroke(selected ? Theme.accent : .clear, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
 }
+
+/// Subpantallas de cada pestaña; mismos grupos que la barra lateral de la app de escritorio.
+enum DroidPage: String, CaseIterable, Identifiable { case emotes = "Emociones", sounds = "Sonidos", lights = "Luces"; var id: String { rawValue } }
+enum AutoPage: String, CaseIterable, Identifiable { case modes = "Modos", follow = "Seguir", patrol = "Patrulla", draw = "Dibujar"; var id: String { rawValue } }
+enum SystemPage: String, CaseIterable, Identifiable { case gamepad = "Mando", settings = "Ajustes", energy = "Energía", log = "Registro"; var id: String { rawValue } }
 
 struct DroidTabs: View {
     @ObservedObject var droid: Droid
@@ -134,6 +171,9 @@ struct DroidTabs: View {
     @StateObject private var follow = FollowController()
     @StateObject private var voice = VoiceController()
     @StateObject private var pad = GamepadController()
+    @State private var droidPage = DroidPage.emotes
+    @State private var autoPage = AutoPage.modes
+    @State private var systemPage = SystemPage.gamepad
 
     /// Detiene todo lo que la app haya puesto en marcha (también lo iniciado por voz).
     private func stopAll() {
@@ -148,28 +188,53 @@ struct DroidTabs: View {
     var body: some View {
         VStack(spacing: 0) {
             VoiceBar(voice: voice, droid: droid, loop: loop, follow: follow, stopAll: stopAll)
+            if !droid.isReady {
+                Text(droid.status).font(.footnote).foregroundStyle(Theme.amber)
+                    .padding(6).frame(maxWidth: .infinity).background(Theme.amber.opacity(0.15))
+            }
             TabView {
-                DriveView(droid: droid, pad: pad).tabItem { Label("Conducir", systemImage: "gamecontroller") }
-                EmotesView(droid: droid).tabItem { Label("Emociones", systemImage: "face.smiling") }
-                AutoEmotesView(droid: droid, loop: loop).tabItem { Label("Automático", systemImage: "repeat") }
-                SoundsView(droid: droid, loop: loop).tabItem { Label("Sonidos", systemImage: "speaker.wave.2") }
-                FollowView(droid: droid, follow: follow).tabItem { Label("Seguir", systemImage: "figure.walk") }
-                PatrolView(droid: droid).tabItem { Label("Patrulla", systemImage: "binoculars") }
-                DrawDriveView(droid: droid).tabItem { Label("Dibujar", systemImage: "scribble") }
-                LightsView(droid: droid).tabItem { Label("Luces", systemImage: "lightbulb") }
-                GamepadView(pad: pad).tabItem { Label("Mando", systemImage: "gamecontroller.fill") }
-                EnergyView(droid: droid).tabItem { Label("Energía", systemImage: "power") }
-                SettingsView(droid: droid).tabItem { Label("Ajustes", systemImage: "gearshape") }
-                LogView(droid: droid).tabItem { Label("Log", systemImage: "terminal") }
-            }
-            .overlay(alignment: .top) {
-                if !droid.isReady {
-                    Text(droid.status).font(.footnote).padding(6).frame(maxWidth: .infinity).background(.orange.opacity(0.3))
+                DriveView(droid: droid, pad: pad)
+                    .tabItem { Label("Conducir", systemImage: "gamecontroller") }
+
+                VStack(spacing: 0) {
+                    SegmentBar(selection: $droidPage) { $0.rawValue }
+                    switch droidPage {
+                    case .emotes: EmotesView(droid: droid)
+                    case .sounds: SoundsView(droid: droid)
+                    case .lights: LightsView(droid: droid)
+                    }
                 }
+                .tabItem { Label("Droide", systemImage: "face.smiling") }
+
+                VStack(spacing: 0) {
+                    SegmentBar(selection: $autoPage) { $0.rawValue }
+                    switch autoPage {
+                    case .modes: AutoEmotesView(droid: droid, loop: loop)
+                    case .follow: FollowView(droid: droid, follow: follow)
+                    case .patrol: PatrolView(droid: droid)
+                    case .draw: DrawDriveView(droid: droid)
+                    }
+                }
+                .tabItem { Label("Automático", systemImage: "repeat") }
+
+                VStack(spacing: 0) {
+                    SegmentBar(selection: $systemPage) { $0.rawValue }
+                    switch systemPage {
+                    case .gamepad: GamepadView(pad: pad)
+                    case .settings: SettingsView(droid: droid)
+                    case .energy: EnergyView(droid: droid)
+                    case .log: LogView(droid: droid)
+                    }
+                }
+                .tabItem { Label("Sistema", systemImage: "gearshape") }
             }
+            .toolbarBackground(Theme.panel, for: .tabBar)
+            .toolbarBackground(.visible, for: .tabBar)
         }
+        .background(Theme.bg)
         .onAppear {
             voice.configure(droid: droid, loop: loop, follow: follow)
+            follow.attach(droid)
             pad.start(droid: droid, loop: loop, stopAll: stopAll)
             BackgroundKeeper.shared.resume()
         }

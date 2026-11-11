@@ -252,6 +252,9 @@ final class FollowController: ObservableObject {
     @Published var status = "Detenido"
     @Published var nearThreshold = -55.0   // dBm; por encima de esto se considera «ya he llegado»
     @Published var speed = 45.0
+    /// Últimas señales filtradas, para la gráfica.
+    @Published var history: [Double] = []
+    static let historySize = 160
 
     private let leg = 1.8             // segundos de cada tramo del zigzag
     private let weave = 30.0          // grados que se desvía cada tramo a un lado y a otro del rumbo
@@ -282,29 +285,40 @@ final class FollowController: ObservableObject {
 
     deinit { timer?.invalidate() }
 
+    /// Empieza a escuchar la señal de este droide. La señal se sigue aunque el modo esté parado,
+    /// para poder verla y calibrar «cerca» sin que el droide se mueva.
+    func attach(_ d: Droid) {
+        guard droid !== d || rssiSub == nil else { return }
+        droid = d
+        smoothed = nil; recent = []; history = []; lastSampleAt = nil
+        rssiSub = d.$rssi.compactMap { $0 }.sink { [weak self] v in self?.ingest(Double(v)) }
+    }
+
+    /// Hay medidas recientes de señal.
+    func isFresh(at now: Date = Date()) -> Bool {
+        lastSampleAt.map { now.timeIntervalSince($0) < stale } ?? false
+    }
+
     func start(_ d: Droid) {
         stop()
-        droid = d
+        attach(d)
         running = true
         phase = .forward
         target = 0; weaveSign = 1
         pos = (0, 0)
-        samples = []; recent = []
-        smoothed = nil
-        lastSampleAt = nil
+        samples = []
         retreated = false; stalled = false
         lastTick = Date()
         newLeg(lastTick)
         status = "Esperando señal…"
         d.configureCollisions()
-        rssiSub = d.$rssi.compactMap { $0 }.sink { [weak self] v in self?.ingest(Double(v)) }
         hitSub = d.collision.sink { [weak self] in self?.onHit() }
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in self?.tick() }
     }
 
     func stop() {
         timer?.invalidate(); timer = nil
-        rssiSub = nil; hitSub = nil
+        hitSub = nil
         if running { droid?.stop(heading: heading) }
         command = (0, heading)
         running = false
@@ -382,7 +396,10 @@ final class FollowController: ObservableObject {
         recent.append(v)
         if recent.count > 3 { recent.removeFirst() }
         let median = recent.sorted()[recent.count / 2]
-        smoothed = smoothed.map { 0.65 * $0 + 0.35 * median } ?? median
+        let s = smoothed.map { 0.65 * $0 + 0.35 * median } ?? median
+        smoothed = s
+        history.append(s)
+        if history.count > Self.historySize { history.removeFirst() }
         if running, phase == .forward {
             // Para el ajuste se usa la medida sin suavizar: suavizarla la retrasaría respecto a la posición.
             samples.append(Sample(x: pos.x, y: pos.y, rssi: v))

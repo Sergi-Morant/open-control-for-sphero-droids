@@ -13,71 +13,89 @@ struct DriveView: View {
     @State private var driveTimer: Timer?
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 18) {
+        Screen {
+            Card {
                 if pad.aiming {
                     Label("Modo apuntado (mando): orienta el droide con el stick izquierdo y vuelve a pulsarlo para fijar «adelante»", systemImage: "scope")
-                        .font(.footnote).foregroundStyle(.orange)
+                        .font(.footnote).foregroundStyle(Theme.amber)
                 }
-                if droid.kind.hasLegs {
-                    Picker("Patas", selection: Binding<Int>(get: { -1 }, set: { v in
-                        if let a = LegAction(rawValue: UInt8(v)) { droid.legAction(a) }
-                    })) {
-                        Text("Patas").tag(-1)
-                        ForEach(LegAction.allCases) { Text($0.title).tag(Int($0.rawValue)) }
+                VStack(spacing: 8) {
+                    Joystick(heading: heading) { x, y in
+                        let mag = min(1, hypot(x, y))
+                        speed = mag > 0.1 ? Int(mag * 255 * (turbo || pad.turbo ? 1 : pad.maxSpeed)) : 0
+                        if mag > 0.1 {
+                            var deg = atan2(x, -y) * 180 / .pi
+                            if deg < 0 { deg += 360 }
+                            heading = Int(deg) % 360
+                        }
+                        startDriving()
+                    } onEnd: {
+                        speed = 0
+                        droid.stop(heading: heading)
+                        stopDriving()
                     }
-                    .pickerStyle(.segmented)
+                    Text("Rumbo \(heading)°").font(.callout.weight(.semibold))
+                    Hint(pad.connectedName == nil ? "Arrastra el círculo para mover el droide." : "También puedes conducir con el mando.")
                 }
+                .frame(maxWidth: .infinity)
+            }
 
-                Joystick { x, y in
-                    let mag = min(1, hypot(x, y))
-                    speed = mag > 0.1 ? Int(mag * 255 * (turbo || pad.turbo ? 1 : pad.maxSpeed)) : 0
-                    if mag > 0.1 {
-                        var deg = atan2(x, -y) * 180 / .pi
-                        if deg < 0 { deg += 360 }
-                        heading = Int(deg) % 360
-                    }
-                    startDriving()
-                } onEnd: {
-                    speed = 0
-                    droid.stop(heading: heading)
-                    stopDriving()
-                }
-
-                HStack {
-                    Toggle("Turbo", isOn: $turbo)
-                    Toggle("Marcha atrás", isOn: $reverse)
-                }
-                if !droid.kind.usesV2 {
-                    Button("Impulso (boost)") { droid.boostV1(heading: heading) }.buttonStyle(.bordered)
-                }
-                VStack(alignment: .leading) {
-                    Text("Velocidad máxima: \(Int(pad.maxSpeed * 100)) %")
+            Card("Velocidad") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Máxima: \(Int(pad.maxSpeed * 100)) %").font(.callout)
                     Slider(value: $pad.maxSpeed, in: 0.15...1)
                 }
+                Toggle("Turbo", isOn: $turbo)
+                Toggle("Marcha atrás", isOn: $reverse)
                 Toggle("Estabilización", isOn: $stabilize).onChange(of: stabilize) { _, v in droid.setStabilization(v) }
-
-                GroupBox("Apuntar") {
-                    Toggle("Modo apuntado", isOn: $aiming).onChange(of: aiming) { _, on in
-                        droid.setAimLight(on)
-                        if on { aimHeading = 0 }
-                    }
-                    if aiming {
-                        Text("Gira el droide hasta que mire hacia donde tú quieres que sea «adelante».").font(.footnote)
-                        Slider(value: $aimHeading, in: 0...359).onChange(of: aimHeading) { _, v in droid.aim(heading: Int(v)) }
-                        Button("Fijar como adelante") { droid.setForward(); aiming = false }.buttonStyle(.borderedProminent)
-                    }
+                if !droid.kind.usesV2 {
+                    Button("Impulso") { droid.boostV1(heading: heading) }.buttonStyle(ChipButtonStyle())
                 }
+            }
 
-                if droid.kind.hasDome {
-                    GroupBox("Cúpula: \(Int(pad.dome))°") {
-                        Slider(value: Binding(get: { pad.dome }, set: { pad.dome = $0; droid.setDome(Float($0)) }), in: -160...180)
+            if droid.kind.hasLegs {
+                Card("Patas") {
+                    HStack(spacing: 8) {
+                        ForEach(LegAction.allCases) { a in
+                            Button { droid.legAction(a) } label: { Text(a.title).frame(maxWidth: .infinity) }
+                                .buttonStyle(ChipButtonStyle())
+                        }
                     }
                 }
             }
-            .padding()
+
+            if droid.kind.hasDome {
+                Card("Cúpula") {
+                    HStack(spacing: 12) {
+                        Slider(value: Binding(get: { pad.dome }, set: { pad.dome = $0; droid.setDome(Float($0)) }), in: -160...180)
+                        Text("\(Int(pad.dome))°").font(.callout.monospacedDigit()).frame(width: 48, alignment: .trailing)
+                        Button("Centrar") { pad.dome = 0; droid.setDome(0) }.buttonStyle(ChipButtonStyle())
+                    }
+                }
+            }
+
+            Card("Apuntar") {
+                if aiming {
+                    Text("Gira el droide hasta que mire hacia donde tú quieres que sea «adelante».").font(.callout)
+                    Slider(value: $aimHeading, in: 0...359).onChange(of: aimHeading) { _, v in droid.aim(heading: Int(v)) }
+                    HStack(spacing: 8) {
+                        Button("Fijar como adelante") { droid.setForward(); setAiming(false) }
+                            .buttonStyle(ChipButtonStyle(fill: Theme.accent)).foregroundStyle(.white)
+                        Button("Cancelar") { setAiming(false) }.buttonStyle(ChipButtonStyle())
+                    }
+                } else {
+                    Hint("Si «adelante» no coincide con lo que ves, reoriéntalo.")
+                    Button("Cambiar «adelante»") { setAiming(true) }.buttonStyle(ChipButtonStyle())
+                }
+            }
         }
         .onDisappear { stopDriving() }
+    }
+
+    private func setAiming(_ on: Bool) {
+        aiming = on
+        droid.setAimLight(on)
+        if on { aimHeading = 0 }
     }
 
     private func startDriving() {
@@ -92,17 +110,30 @@ struct DriveView: View {
 }
 
 struct Joystick: View {
+    var heading: Int = 0
     var onChange: (CGFloat, CGFloat) -> Void
     var onEnd: () -> Void
     @State private var knob: CGSize = .zero
-    private let radius: CGFloat = 90
+    private let radius: CGFloat = 105
 
     var body: some View {
         ZStack {
-            Circle().fill(.quaternary).frame(width: radius * 2, height: radius * 2)
-            Circle().fill(.tint).frame(width: 64, height: 64).offset(knob)
+            Circle().fill(Theme.well)
+            Circle().stroke(Theme.border, lineWidth: 2)
+            Circle().stroke(Theme.border, lineWidth: 1).frame(width: radius, height: radius)
+            Rectangle().fill(Theme.border).frame(width: radius * 2, height: 1)
+            Rectangle().fill(Theme.border).frame(width: 1, height: radius * 2)
+            // Marca del rumbo en el borde.
+            Capsule().fill(Theme.amber).frame(width: 4, height: 14)
+                .offset(y: -radius + 7)
+                .rotationEffect(.degrees(Double(heading)))
+            Circle().fill(knob == .zero ? Theme.accent.opacity(0.85) : Theme.accent).frame(width: 68, height: 68)
+                .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 2))
+                .offset(knob)
         }
-        .frame(width: radius * 2 + 20, height: radius * 2 + 20)
+        .frame(width: radius * 2, height: radius * 2)
+        .padding(10)
+        .contentShape(Circle())
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { v in
                 let d = hypot(v.translation.width, v.translation.height)

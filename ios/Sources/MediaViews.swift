@@ -13,19 +13,19 @@ struct EmotesView: View {
         if droid.kind.animations.isEmpty {
             ContentUnavailableView("Sin animaciones", systemImage: "face.dashed",
                                    description: Text("Las animaciones de BB-8 son programas internos de la app original (assets de Unity) y no están incluidas."))
+                .background(Theme.bg)
         } else {
-            List {
-                Section {
-                    Button("Parar animación", role: .destructive, action: droid.stopAnimation)
-                    if droid.busy { Label("Reproduciendo…", systemImage: "play.circle").foregroundStyle(.secondary) }
+            Screen {
+                HStack(spacing: 10) {
+                    Button("Parar animación", action: droid.stopAnimation).buttonStyle(ChipButtonStyle())
+                    if droid.busy { Pill(color: Theme.amber, text: "Reproduciendo…") }
                 }
                 ForEach(groups, id: \.0) { title, items in
-                    Section(title) {
-                        ForEach(items) { a in
-                            Button { droid.play(a) } label: {
-                                HStack { Text(a.title); Spacer(); Text(String(format: "%.1f s", a.seconds)).foregroundStyle(.secondary) }
+                    Card("\(title) · \(items.count)") {
+                        FlowLayout {
+                            ForEach(items) { a in
+                                Button(a.title) { droid.play(a) }.buttonStyle(ChipButtonStyle()).disabled(droid.busy)
                             }
-                            .disabled(droid.busy)
                         }
                     }
                 }
@@ -36,7 +36,6 @@ struct EmotesView: View {
 
 struct SoundsView: View {
     @ObservedObject var droid: Droid
-    @ObservedObject var loop: EmoteLoopController
     @State private var volume = 150.0
     @State private var search = ""
 
@@ -50,28 +49,33 @@ struct SoundsView: View {
         if !droid.kind.hasAudio {
             ContentUnavailableView("Sin altavoz", systemImage: "speaker.slash",
                                    description: Text("BB-8 reproducía sus sonidos desde el teléfono con el motor Wwise de la app original, que no está incluido."))
+                .background(Theme.bg)
         } else {
+            // Lista (y no tarjetas) porque son cientos de sonidos y así solo se crean las filas visibles.
             List {
-                Section {
-                    VStack(alignment: .leading) {
-                        Text("Volumen: \(Int(volume))")
+                Section("Audio") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Volumen: \(Int(volume))").font(.callout)
                         Slider(value: $volume, in: 0...255) { editing in if !editing { droid.setVolume(UInt8(volume)) } }
                     }
                     Toggle("Charla aleatoria", isOn: Binding(get: { droid.chatter }, set: { droid.setChatter($0) }))
                     Button("Parar audio", role: .destructive, action: droid.stopAudio)
-                    TextField("Buscar sonido", text: $search).textInputAutocapitalization(.never)
                 }
-                if !droid.kind.animations.isEmpty { AutoEmoteSections(droid: droid, loop: loop) }
-                if droid.kind == .r2q5 {
-                    Text("El R2-Q5 usa aquí la lista de sonidos del R2-D2; si alguno no suena, avísame.")
-                        .font(.footnote).foregroundStyle(.secondary)
+                .listRowBackground(Theme.card)
+                Section {
+                    TextField("Buscar sonido…", text: $search).textInputAutocapitalization(.never).autocorrectionDisabled()
+                } footer: {
+                    if droid.kind == .r2q5 { Text("El R2-Q5 usa aquí la lista de sonidos del R2-D2; puede que alguno no suene.") }
                 }
+                .listRowBackground(Theme.card)
                 ForEach(groups, id: \.0) { title, items in
                     Section("\(title) (\(items.count))") {
-                        ForEach(items) { s in Button(s.title) { droid.play(s) } }
+                        ForEach(items) { s in Button(s.title) { droid.play(s) }.foregroundStyle(.primary) }
                     }
+                    .listRowBackground(Theme.card)
                 }
             }
+            .themedList()
         }
     }
 }

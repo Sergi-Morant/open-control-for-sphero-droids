@@ -23,6 +23,7 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+          Group {
             Section("Droide") {
                 LabeledContent("Nombre", value: droid.name)
                 LabeledContent("Modelo", value: droid.kind.title)
@@ -70,7 +71,10 @@ struct SettingsView: View {
                 Text("Actualización de firmware (OTA), realidad aumentada, tienda, Force Band y sincronía de Watch With Me con películas: dependen de servicios o recursos de la app original, o pueden dejar el droide inservible si fallan.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
+          }
+          .listRowBackground(Theme.card)
         }
+        .themedList()
     }
 }
 
@@ -81,6 +85,7 @@ struct EnergyView: View {
 
     var body: some View {
         Form {
+          Group {
             Section("Energía") {
                 Button("Despertar", action: droid.wake)
                 Button("Dormir") { droid.sleep() }
@@ -97,7 +102,10 @@ struct EnergyView: View {
             } header: { Text("Segundo plano") } footer: {
                 Text("Está activado por defecto. Con el iPhone bloqueado la app sigue enviando órdenes al droide (mando, modos automáticos, voz y seguimiento) porque reproduce una señal inaudible para que iOS no la suspenda. Gasta más batería y el iPhone mostrará el indicador de audio. Si el estado dice «Detenido», desactívalo y vuelve a activarlo.")
             }
+          }
+          .listRowBackground(Theme.card)
         }
+        .themedList()
     }
 }
 
@@ -112,20 +120,24 @@ struct LogView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Button("Copiar log") { UIPasteboard.general.string = report }
-                Button("Batería", action: droid.requestBattery)
-                Button("Despertar", action: droid.wake)
-                Button("Borrar") { droid.log = [] }
+            HStack(spacing: 8) {
+                Button("Copiar") { UIPasteboard.general.string = report }
+                    .buttonStyle(ChipButtonStyle(fill: Theme.accent)).foregroundStyle(.white)
+                Button("Batería", action: droid.requestBattery).buttonStyle(ChipButtonStyle())
+                Button("Despertar", action: droid.wake).buttonStyle(ChipButtonStyle())
+                Button("Borrar") { droid.log = [] }.buttonStyle(ChipButtonStyle())
             }
-            .buttonStyle(.bordered)
             .padding(.vertical, 8)
             ScrollView {
-                Text(droid.log.joined(separator: "\n"))
+                Text(droid.log.isEmpty ? "Registro vacío." : droid.log.joined(separator: "\n"))
                     .font(.system(.caption2, design: .monospaced))
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
+                    .padding(12)
             }
+            .background(Theme.well, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.border, lineWidth: 1))
+            .padding([.horizontal, .bottom], 14)
         }
+        .background(Theme.bg)
     }
 }

@@ -295,6 +295,7 @@ struct GamepadView: View {
 
     var body: some View {
         Form {
+          Group {
             Section {
                 if let n = pad.connectedName {
                     Label("Mando conectado: \(n)", systemImage: "gamecontroller.fill").foregroundStyle(.green)
@@ -320,10 +321,13 @@ struct GamepadView: View {
                         Text("Sin asignar").tag(PadAction?.none)
                         ForEach(PadAction.allCases) { Text($0.title).tag(PadAction?.some($0)) }
                     }
-                    .pickerStyle(.navigationLink)
+                    .pickerStyle(.menu)
                 }
                 Button("Restablecer (A = 3 patas, B = 2 patas, Y = contoneo, X = parar, clics de stick = apuntar y centrar)", action: pad.resetMapping)
             }
+          }
+          .listRowBackground(Theme.card)
         }
+        .themedList()
     }
 }

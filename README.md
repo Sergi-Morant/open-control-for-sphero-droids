@@ -4,6 +4,7 @@ Apps de código abierto para controlar por Bluetooth LE los droides **R2-D2, R2-
 
 - **iPhone** (`ios/`): SwiftUI + CoreBluetooth.
 - **Ordenador** (`desktop/`): Rust, para **macOS, Linux y Windows**.
+- **Android** (`android/`): Kotlin + Jetpack Compose.
 
 Nació porque la app oficial *Star Wars Droids* solo se encuentra para Android y quería controlar mi R2-D2 desde iOS.
 
@@ -18,6 +19,7 @@ Nació porque la app oficial *Star Wars Droids* solo se encuentra para Android y
 | iPhone + R2-D2 | Probado por el autor: funciona. El mando y los botones de parada son lo último que se ha añadido y aún no se han probado con un mando real |
 | iPhone + R2-Q5, BB-9E, BB-8 | Sin probar (mismo protocolo v2 que el R2-D2, y v1 para BB-8) |
 | **macOS, Linux y Windows** | **Sin probar.** Compilan y pasan las pruebas automáticas del protocolo, pero no se han ejecutado con un droide ni con un mando |
+| **Android** | **Sin probar** en un teléfono ni con un droide. Compila, pasa las pruebas del protocolo y las pantallas se han revisado con un renderizador de pruebas |
 
 Si pruebas algo de lo que falta, abre un *issue* con el log (pestaña **Log › Copiar log**).
 
@@ -59,6 +61,14 @@ Todos los botones se pueden reasignar en la pestaña **Mando** (parar todo, fija
 Actualización de firmware (OTA, con riesgo de dejar el droide inservible), realidad aumentada, tienda, Force Band, sincronía de *Watch With Me* con películas, y las animaciones y sonidos de BB-8 (viven en assets de Unity y en el motor Wwise de la app original). Las órdenes de voz y el modo en segundo plano no están en las apps de ordenador.
 
 ## Instalar
+
+### Android
+
+Descarga `open-control-for-sphero-droids-android.apk` de la [última release](https://github.com/Sergi-Morant/open-control-for-sphero-droids/releases/latest) y ábrelo en el teléfono (Android 8 o superior; hay que permitir «instalar apps desconocidas»). El APK no lleva una firma estable, así que para actualizar hay que desinstalar antes la versión anterior.
+
+Respecto a las otras apps, en Android **no hay todavía** órdenes de voz, reasignación de botones del mando ni funcionamiento con la pantalla apagada, y los colores de las luces se eligen de una paleta fija.
+
+Para compilar: `cd android && ./gradlew assembleDebug` (JDK 17 o 21 y el SDK de Android).
 
 ### iPhone
 
@@ -110,6 +120,7 @@ Despierta al droide sacándolo del cargador y pulsa **Buscar droides**.
 ```
 ios/        app de iPhone (SwiftUI)         project.yml → XcodeGen
 desktop/    app de ordenador (Rust)         btleplug + egui + gilrs
+android/    app de Android (Kotlin)         Jetpack Compose
 docs/       PROTOCOLO.md: el protocolo Bluetooth LE documentado
 tools/      scripts para extraer datos del APK (IDs de comando, catálogo de sonidos y animaciones)
 ```
